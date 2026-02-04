@@ -1,0 +1,12 @@
+{% for idx in range(1, (service_count | int) + 1) %}
+---
+apiVersion: skupper.io/v2alpha1
+kind: Listener
+metadata:
+  name: "{{ service_name_prefix }}-{{ idx }}"
+spec:
+  routingKey: "{{ routing_key_prefix }}-{{ idx }}"
+  host: "{{ service_name_prefix }}-{{ idx }}"
+  port: {{ (base_listener_port | int) + (idx | int) }}
+
+{% endfor %}

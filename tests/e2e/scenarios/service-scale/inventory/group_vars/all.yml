@@ -1,0 +1,39 @@
+---
+ansible_connection: local
+ansible_user: "{{ lookup('env', 'USER') }}"
+debug: false
+namespace_prefix: "e2e"
+generate_namespaces_namespace_label: "service-scale"
+
+service_count: 30
+service_name_prefix: "svc"
+routing_key_prefix: "svc"
+
+base_listener_port: 10080
+
+backend_app_label: "backend"
+backend_port: 8080
+
+smoke_test_index: 1
+
+ready_retries: 0
+ready_delay: 5
+
+validate_all: false
+validation_sample_size: 1
+
+connector_recreate_on_pending: false
+
+use_dynamic_creation: false
+connector_batch_size: 5
+listener_batch_size: 5
+batch_pause_seconds: 2
+
+requeue_on_pending: false
+
+# Keep namespaces for debugging; prevents teardown during/after failures
+skip_teardown: true
+
+# Toggle: generate static-style YAML from templates and apply
+dynamic_via_static_template: true
+

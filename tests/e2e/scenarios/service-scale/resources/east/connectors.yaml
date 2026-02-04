@@ -1,0 +1,300 @@
+---
+apiVersion: skupper.io/v2alpha1
+kind: Connector
+metadata:
+  name: "svc-1"
+spec:
+  routingKey: "svc-1"
+  port: 8080
+  selector: "app=backend"
+
+---
+apiVersion: skupper.io/v2alpha1
+kind: Connector
+metadata:
+  name: "svc-2"
+spec:
+  routingKey: "svc-2"
+  port: 8080
+  selector: "app=backend"
+
+---
+apiVersion: skupper.io/v2alpha1
+kind: Connector
+metadata:
+  name: "svc-3"
+spec:
+  routingKey: "svc-3"
+  port: 8080
+  selector: "app=backend"
+
+---
+apiVersion: skupper.io/v2alpha1
+kind: Connector
+metadata:
+  name: "svc-4"
+spec:
+  routingKey: "svc-4"
+  port: 8080
+  selector: "app=backend"
+
+---
+apiVersion: skupper.io/v2alpha1
+kind: Connector
+metadata:
+  name: "svc-5"
+spec:
+  routingKey: "svc-5"
+  port: 8080
+  selector: "app=backend"
+
+---
+apiVersion: skupper.io/v2alpha1
+kind: Connector
+metadata:
+  name: "svc-6"
+spec:
+  routingKey: "svc-6"
+  port: 8080
+  selector: "app=backend"
+
+---
+apiVersion: skupper.io/v2alpha1
+kind: Connector
+metadata:
+  name: "svc-7"
+spec:
+  routingKey: "svc-7"
+  port: 8080
+  selector: "app=backend"
+
+---
+apiVersion: skupper.io/v2alpha1
+kind: Connector
+metadata:
+  name: "svc-8"
+spec:
+  routingKey: "svc-8"
+  port: 8080
+  selector: "app=backend"
+
+---
+apiVersion: skupper.io/v2alpha1
+kind: Connector
+metadata:
+  name: "svc-9"
+spec:
+  routingKey: "svc-9"
+  port: 8080
+  selector: "app=backend"
+
+---
+apiVersion: skupper.io/v2alpha1
+kind: Connector
+metadata:
+  name: "svc-10"
+spec:
+  routingKey: "svc-10"
+  port: 8080
+  selector: "app=backend"
+
+---
+apiVersion: skupper.io/v2alpha1
+kind: Connector
+metadata:
+  name: "svc-11"
+spec:
+  routingKey: "svc-11"
+  port: 8080
+  selector: "app=backend"
+
+---
+apiVersion: skupper.io/v2alpha1
+kind: Connector
+metadata:
+  name: "svc-12"
+spec:
+  routingKey: "svc-12"
+  port: 8080
+  selector: "app=backend"
+
+---
+apiVersion: skupper.io/v2alpha1
+kind: Connector
+metadata:
+  name: "svc-13"
+spec:
+  routingKey: "svc-13"
+  port: 8080
+  selector: "app=backend"
+
+---
+apiVersion: skupper.io/v2alpha1
+kind: Connector
+metadata:
+  name: "svc-14"
+spec:
+  routingKey: "svc-14"
+  port: 8080
+  selector: "app=backend"
+
+---
+apiVersion: skupper.io/v2alpha1
+kind: Connector
+metadata:
+  name: "svc-15"
+spec:
+  routingKey: "svc-15"
+  port: 8080
+  selector: "app=backend"
+
+---
+apiVersion: skupper.io/v2alpha1
+kind: Connector
+metadata:
+  name: "svc-16"
+spec:
+  routingKey: "svc-16"
+  port: 8080
+  selector: "app=backend"
+
+---
+apiVersion: skupper.io/v2alpha1
+kind: Connector
+metadata:
+  name: "svc-17"
+spec:
+  routingKey: "svc-17"
+  port: 8080
+  selector: "app=backend"
+
+---
+apiVersion: skupper.io/v2alpha1
+kind: Connector
+metadata:
+  name: "svc-18"
+spec:
+  routingKey: "svc-18"
+  port: 8080
+  selector: "app=backend"
+
+---
+apiVersion: skupper.io/v2alpha1
+kind: Connector
+metadata:
+  name: "svc-19"
+spec:
+  routingKey: "svc-19"
+  port: 8080
+  selector: "app=backend"
+
+---
+apiVersion: skupper.io/v2alpha1
+kind: Connector
+metadata:
+  name: "svc-20"
+spec:
+  routingKey: "svc-20"
+  port: 8080
+  selector: "app=backend"
+
+---
+apiVersion: skupper.io/v2alpha1
+kind: Connector
+metadata:
+  name: "svc-21"
+spec:
+  routingKey: "svc-21"
+  port: 8080
+  selector: "app=backend"
+
+---
+apiVersion: skupper.io/v2alpha1
+kind: Connector
+metadata:
+  name: "svc-22"
+spec:
+  routingKey: "svc-22"
+  port: 8080
+  selector: "app=backend"
+
+---
+apiVersion: skupper.io/v2alpha1
+kind: Connector
+metadata:
+  name: "svc-23"
+spec:
+  routingKey: "svc-23"
+  port: 8080
+  selector: "app=backend"
+
+---
+apiVersion: skupper.io/v2alpha1
+kind: Connector
+metadata:
+  name: "svc-24"
+spec:
+  routingKey: "svc-24"
+  port: 8080
+  selector: "app=backend"
+
+---
+apiVersion: skupper.io/v2alpha1
+kind: Connector
+metadata:
+  name: "svc-25"
+spec:
+  routingKey: "svc-25"
+  port: 8080
+  selector: "app=backend"
+
+---
+apiVersion: skupper.io/v2alpha1
+kind: Connector
+metadata:
+  name: "svc-26"
+spec:
+  routingKey: "svc-26"
+  port: 8080
+  selector: "app=backend"
+
+---
+apiVersion: skupper.io/v2alpha1
+kind: Connector
+metadata:
+  name: "svc-27"
+spec:
+  routingKey: "svc-27"
+  port: 8080
+  selector: "app=backend"
+
+---
+apiVersion: skupper.io/v2alpha1
+kind: Connector
+metadata:
+  name: "svc-28"
+spec:
+  routingKey: "svc-28"
+  port: 8080
+  selector: "app=backend"
+
+---
+apiVersion: skupper.io/v2alpha1
+kind: Connector
+metadata:
+  name: "svc-29"
+spec:
+  routingKey: "svc-29"
+  port: 8080
+  selector: "app=backend"
+
+---
+apiVersion: skupper.io/v2alpha1
+kind: Connector
+metadata:
+  name: "svc-30"
+spec:
+  routingKey: "svc-30"
+  port: 8080
+  selector: "app=backend"
+
