@@ -3,5 +3,3 @@ apiVersion: skupper.io/v2alpha1
 kind: Site
 metadata:
   name: east
-spec:
-  linkAccess: default

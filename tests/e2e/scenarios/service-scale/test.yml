@@ -17,26 +17,8 @@
         - name: "[ {{ test_identifier }} ] - Generate namespaces"
           ansible.builtin.include_role:
             name: e2e.tests.generate_namespaces
-
-        # Ensure template-generated YAMLs contain exactly 'service_count' CRs upfront
-        - name: "[ {{ test_identifier }} ] - Pre-generate connectors.yaml (east)"
-          ansible.builtin.template:
-            src: "{{ playbook_dir }}/templates/connectors.j2"
-            dest: "{{ playbook_dir }}/resources/east/connectors.yaml"
-            mode: "0644"
-          when:
-            - dynamic_via_static_template | default(false) | bool
-            - "'east' in inventory_hostname"
-
-        - name: "[ {{ test_identifier }} ] - Pre-generate listeners.yaml (west)"
-          ansible.builtin.template:
-            src: "{{ playbook_dir }}/templates/listeners.j2"
-            dest: "{{ playbook_dir }}/resources/west/listeners.yaml"
-            mode: "0644"
-          when:
-            - dynamic_via_static_template | default(false) | bool
-            - "'west' in inventory_hostname"
-
+        
+ 
         - name: "[ {{ test_identifier }} ] - Create Skupper resources for west site"
           include_tasks: skupper-sites.yml
           vars:
@@ -62,7 +44,7 @@
             - west_site.resources | length >= 1
             - west_site.resources[0].status is defined
             - (west_site.resources[0].status.status | default('')) in ['Configured','Running','Ready'] or (((west_site.resources[0].status.conditions | default([])) | selectattr('type','equalto','Ready') | selectattr('status','equalto','True') | list | length) > 0)
-          retries: "{{ (ready_retries | int) if (ready_retries | int) > 0 else 999999 }}"
+          retries: "{{ (ready_retries | int) if (ready_retries | int) > 0 else (ready_retries_default | int) }}"
           delay: "{{ ready_delay }}"
           when:
             - "'west' in inventory_hostname"
@@ -83,7 +65,7 @@
                 | selectattr('type','equalto','Available')
                 | selectattr('status','equalto','True')
                 | list | length) > 0)
-          retries: "{{ (ready_retries | int) if (ready_retries | int) > 0 else 999999 }}"
+          retries: "{{ (ready_retries | int) if (ready_retries | int) > 0 else (ready_retries_default | int) }}"
           delay: "{{ ready_delay }}"
           when:
             - "'west' in inventory_hostname"
@@ -99,7 +81,7 @@
             - east_site.resources | length >= 1
             - east_site.resources[0].status is defined
             - (east_site.resources[0].status.status | default('')) in ['Configured','Running','Ready'] or (((east_site.resources[0].status.conditions | default([])) | selectattr('type','equalto','Ready') | selectattr('status','equalto','True') | list | length) > 0)
-          retries: "{{ (ready_retries | int) if (ready_retries | int) > 0 else 999999 }}"
+          retries: "{{ (ready_retries | int) if (ready_retries | int) > 0 else (ready_retries_default | int) }}"
           delay: "{{ ready_delay }}"
           when:
             - "'east' in inventory_hostname"
@@ -120,7 +102,7 @@
                 | selectattr('type','equalto','Available')
                 | selectattr('status','equalto','True')
                 | list | length) > 0)
-          retries: "{{ (ready_retries | int) if (ready_retries | int) > 0 else 999999 }}"
+          retries: "{{ (ready_retries | int) if (ready_retries | int) > 0 else (ready_retries_default | int) }}"
           delay: "{{ ready_delay }}"
           when:
             - "'east' in inventory_hostname"
@@ -156,7 +138,7 @@
             - link_list.resources[0].status is defined
             - link_list.resources[0].status.status is defined
             - link_list.resources[0].status.status == "Ready"
-          retries: "{{ (ready_retries | int) if (ready_retries | int) > 0 else 999999 }}"
+          retries: "{{ (ready_retries | int) if (ready_retries | int) > 0 else (ready_retries_default | int) }}"
           delay: "{{ ready_delay }}"
           when:
             - "'east' in inventory_hostname"
@@ -174,65 +156,28 @@
             service_indices: "{{ range(1, (service_count | int) + 1) | list }}"
           when:
             - use_dynamic_creation | default(false) | bool
-
-        - name: "[ {{ test_identifier }} ] - Prepare connector/listener batches"
-          ansible.builtin.set_fact:
-            connector_batches: "{{ service_indices | batch((connector_batch_size | default(50) | int)) | list }}"
-            listener_batches: "{{ service_indices | batch((listener_batch_size | default(50) | int)) | list }}"
-          when:
-            - use_dynamic_creation | default(false) | bool
-
-        # Generate and apply static-style YAMLs instead of batch creation (east connectors)
-        - name: "[ {{ test_identifier }} ] - Generate connectors.yaml from template (east)"
-          ansible.builtin.template:
-            src: "{{ playbook_dir }}/templates/connectors.j2"
-            dest: "{{ playbook_dir }}/resources/east/connectors.yaml"
-            mode: "0644"
-          when:
-            - dynamic_via_static_template | default(false) | bool
-            - "'east' in inventory_hostname"
-
-        - name: "[ {{ test_identifier }} ] - Apply generated connectors.yaml (east)"
-          kubernetes.core.k8s:
-            state: present
-            src: "{{ playbook_dir }}/resources/east/connectors.yaml"
+ 
+        - name: "[ {{ test_identifier }} ] - Create all Connectors (east)"
+          skupper.v2.resource:
             namespace: "{{ namespace_prefix }}-{{ namespace_name }}"
             kubeconfig: "{{ kubeconfig }}"
-          when:
-            - dynamic_via_static_template | default(false) | bool
-            - "'east' in inventory_hostname"
-
-        # Determine how many connectors actually exist, to drive listeners and waits
-        - name: "[ {{ test_identifier }} ] - Compute effective service_count from connectors (east)"
-          kubernetes.core.k8s_info:
-            api_version: skupper.io/v2alpha1
-            kind: Connector
-            namespace: "{{ namespace_prefix }}-{{ namespace_name }}"
-            kubeconfig: "{{ kubeconfig }}"
-          register: cons_all_after_apply
-          when:
-            - dynamic_via_static_template | default(false) | bool
-            - "'east' in inventory_hostname"
-
-        - name: "[ {{ test_identifier }} ] - Set effective_service_count (east)"
-          ansible.builtin.set_fact:
-            effective_service_count: "{{ (cons_all_after_apply.resources | length) | int }}"
-          when:
-            - dynamic_via_static_template | default(false) | bool
-            - "'east' in inventory_hostname"
-
-        - name: "[ {{ test_identifier }} ] - Create Connectors in batches (east)"
-          ansible.builtin.include_tasks: create-connectors-batch.yml
-          vars:
-            batch_indices: "{{ item }}"
-          loop: "{{ connector_batches }}"
+            def:
+              apiVersion: skupper.io/v2alpha1
+              kind: Connector
+              metadata:
+                name: "{{ service_name_prefix }}-{{ idx }}"
+              spec:
+                routingKey: "{{ routing_key_prefix }}-{{ idx }}"
+                port: "{{ backend_port | int }}"
+                selector: "app={{ backend_app_label }}"
+          loop: "{{ service_indices }}"
+          loop_control:
+            loop_var: idx
           when:
             - use_dynamic_creation | default(false) | bool
-            - not dynamic_via_static_template | default(false) | bool
             - "'east' in inventory_hostname"
 
-        # Ensure all connectors are fully Ready before creating listeners to avoid "No matching connectors"
-        - name: "[ {{ test_identifier }} ] - Wait for all Connectors Ready (east) before listeners (dynamic)"
+        - name: "[ {{ test_identifier }} ] - Wait for expected connector count (east) before creating listeners"
           kubernetes.core.k8s_info:
             api_version: skupper.io/v2alpha1
             kind: Connector
@@ -240,59 +185,32 @@
             kubeconfig: "{{ kubeconfig }}"
           register: cons_pre_listeners
           until:
-            - cons_pre_listeners.resources | length == ((hostvars['east'].effective_service_count | default(service_count)) | int)
-          retries: "{{ (ready_retries | int) if (ready_retries | int) > 0 else 999999 }}"
+            - cons_pre_listeners.resources | length == (service_count | int)
+          retries: "{{ (ready_retries | int) if (ready_retries | int) > 0 else (ready_retries_default | int) }}"
           delay: "{{ ready_delay }}"
-          when:
-            - (use_dynamic_creation | default(false) | bool) or (dynamic_via_static_template | default(false) | bool)
-            - "'east' in inventory_hostname"
-
-        - name: "[ {{ test_identifier }} ] - Wait for network status published on west (dynamic/static)"
-          kubernetes.core.k8s_info:
-            api_version: v1
-            kind: ConfigMap
-            name: skupper-network-status
-            namespace: "{{ namespace_prefix }}-{{ namespace_name }}"
-            kubeconfig: "{{ kubeconfig }}"
-          register: west_net_status
-          until:
-            - west_net_status.resources | length == 1
-          retries: "{{ (ready_retries | int) if (ready_retries | int) > 0 else 999999 }}"
-          delay: "{{ ready_delay }}"
-          when:
-            - (use_dynamic_creation | default(false) | bool) or (dynamic_via_static_template | default(false) | bool)
-            - "'west' in inventory_hostname"
-
-        # Generate and apply static-style YAMLs instead of batch creation (west listeners)
-        - name: "[ {{ test_identifier }} ] - Generate listeners.yaml from template (west)"
-          ansible.builtin.template:
-            src: "{{ playbook_dir }}/templates/listeners.j2"
-            dest: "{{ playbook_dir }}/resources/west/listeners.yaml"
-            mode: "0644"
-          vars:
-            service_count: "{{ hostvars['east'].effective_service_count | default(service_count) }}"
-          when:
-            - dynamic_via_static_template | default(false) | bool
-            - "'west' in inventory_hostname"
-
-        - name: "[ {{ test_identifier }} ] - Apply generated listeners.yaml (west)"
-          kubernetes.core.k8s:
-            state: present
-            src: "{{ playbook_dir }}/resources/west/listeners.yaml"
-            namespace: "{{ namespace_prefix }}-{{ namespace_name }}"
-            kubeconfig: "{{ kubeconfig }}"
-          when:
-            - dynamic_via_static_template | default(false) | bool
-            - "'west' in inventory_hostname"
-
-        - name: "[ {{ test_identifier }} ] - Create Listeners in batches (west)"
-          ansible.builtin.include_tasks: create-listeners-batch.yml
-          vars:
-            batch_indices: "{{ item }}"
-          loop: "{{ listener_batches }}"
           when:
             - use_dynamic_creation | default(false) | bool
-            - not dynamic_via_static_template | default(false) | bool
+            - "'east' in inventory_hostname"
+ 
+
+        - name: "[ {{ test_identifier }} ] - Create all Listeners (west)"
+          skupper.v2.resource:
+            namespace: "{{ namespace_prefix }}-{{ namespace_name }}"
+            kubeconfig: "{{ kubeconfig }}"
+            def:
+              apiVersion: skupper.io/v2alpha1
+              kind: Listener
+              metadata:
+                name: "{{ service_name_prefix }}-{{ idx }}"
+              spec:
+                routingKey: "{{ routing_key_prefix }}-{{ idx }}"
+                host: "{{ service_name_prefix }}-{{ idx }}"
+                port: "{{ (base_listener_port | int) + (idx | int) }}"
+          loop: "{{ service_indices }}"
+          loop_control:
+            loop_var: idx
+          when:
+            - use_dynamic_creation | default(false) | bool
             - "'west' in inventory_hostname"
 
 
@@ -304,15 +222,15 @@
             kubeconfig: "{{ kubeconfig }}"
           register: cons
           until:
-            - cons.resources | length == ((hostvars['east'].effective_service_count | default(service_count)) | int)
+            - cons.resources | length == (service_count | int)
             - >
               (((cons.resources
                   | map(attribute='status') | select('defined')
                   | map(attribute='conditions') | select('defined') | list | flatten
                   | selectattr('type','equalto','Ready')
                   | selectattr('status','equalto','True')
-                  | list | length)) == ((hostvars['east'].effective_service_count | default(service_count)) | int))
-          retries: "{{ (ready_retries | int) if (ready_retries | int) > 0 else 999999 }}"
+                  | list | length)) == (service_count | int))
+          retries: "{{ (ready_retries | int) if (ready_retries | int) > 0 else (ready_retries_default | int) }}"
           delay: "{{ ready_delay }}"
           when:
             - "'east' in inventory_hostname"
@@ -325,20 +243,19 @@
             kubeconfig: "{{ kubeconfig }}"
           register: lis
           until:
-            - lis.resources | length == ((hostvars['east'].effective_service_count | default(service_count)) | int)
+            - lis.resources | length == (service_count | int)
             - >
               (((lis.resources
                   | map(attribute='status') | select('defined')
                   | map(attribute='conditions') | select('defined') | list | flatten
                   | selectattr('type','equalto','Ready')
                   | selectattr('status','equalto','True')
-                  | list | length)) == ((hostvars['east'].effective_service_count | default(service_count)) | int))
-          retries: "{{ (ready_retries | int) if (ready_retries | int) > 0 else 999999 }}"
+                  | list | length)) == (service_count | int))
+          retries: "{{ (ready_retries | int) if (ready_retries | int) > 0 else (ready_retries_default | int) }}"
           delay: "{{ ready_delay }}"
           when:
             - "'west' in inventory_hostname"
 
-        # Minimal smoke validation, mirroring hello-world style: curl one service
         - name: "[ {{ test_identifier }} ] - Smoke validate svc-{{ smoke_test_index }} from west"
           ansible.builtin.include_role:
             name: e2e.tests.run_curl
