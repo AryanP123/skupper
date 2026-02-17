@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"sort"
 	"text/tabwriter"
 
 	"github.com/skupperproject/skupper/internal/cmd/skupper/common"
@@ -106,6 +107,8 @@ func (cmd *CmdLinkStatus) Run() error {
 			fmt.Println("There are no link resources in the namespace")
 			return nil
 		}
+
+		sort.Slice(linkList.Items, func(i, j int) bool { return linkList.Items[i].Name < linkList.Items[j].Name })
 
 		if cmd.output != "" {
 			for _, link := range linkList.Items {

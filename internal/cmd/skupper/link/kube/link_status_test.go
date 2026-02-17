@@ -1,16 +1,24 @@
 package kube
 
 import (
+	"encoding/json"
+	"io"
+	"os"
+	"strings"
 	"testing"
 
 	"github.com/skupperproject/skupper/internal/cmd/skupper/common"
 	"github.com/skupperproject/skupper/internal/cmd/skupper/common/testutils"
 	"github.com/skupperproject/skupper/internal/cmd/skupper/common/utils"
+	"github.com/skupperproject/skupper/internal/kube/client"
 	fakeclient "github.com/skupperproject/skupper/internal/kube/client/fake"
 	"github.com/skupperproject/skupper/pkg/apis/skupper/v2alpha1"
+	skupperfake "github.com/skupperproject/skupper/pkg/generated/client/clientset/versioned/fake"
+	fakeskupperv2alpha1 "github.com/skupperproject/skupper/pkg/generated/client/clientset/versioned/typed/skupper/v2alpha1/fake"
 	"gotest.tools/v3/assert"
 	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	k8stesting "k8s.io/client-go/testing"
 )
 
 func TestCmdLinkStatus_ValidateInput(t *testing.T) {
@@ -275,6 +283,56 @@ func TestCmdLinkStatus_WaitUntilReady(t *testing.T) {
 
 }
 
+// Verifies that multiple links are output in deterministic order (sorted by name).
+// It uses a reactor that returns links in unsorted order [z, a, m]
+func TestCmdLinkStatus_LinkListSortedByName(t *testing.T) {
+	linkA := &v2alpha1.Link{ObjectMeta: v1.ObjectMeta{Name: "a-link", Namespace: "test"}}
+	linkM := &v2alpha1.Link{ObjectMeta: v1.ObjectMeta{Name: "m-link", Namespace: "test"}}
+	linkZ := &v2alpha1.Link{ObjectMeta: v1.ObjectMeta{Name: "z-link", Namespace: "test"}}
+
+	skupperObjects := []runtime.Object{
+		&v2alpha1.SiteList{
+			Items: []v2alpha1.Site{
+				{ObjectMeta: v1.ObjectMeta{Name: "the-site", Namespace: "test"}},
+			},
+		},
+		linkZ, linkA, linkM,
+	}
+	clientset := skupperfake.NewSimpleClientset(skupperObjects...)
+	fakeTyped := clientset.SkupperV2alpha1().(*fakeskupperv2alpha1.FakeSkupperV2alpha1)
+	fakeTyped.PrependReactor("list", "links", func(action k8stesting.Action) (handled bool, ret runtime.Object, err error) {
+		return true, &v2alpha1.LinkList{Items: []v2alpha1.Link{*linkZ, *linkA, *linkM}}, nil
+	})
+
+	kubeClient := &client.KubeClient{Namespace: "test", Skupper: clientset}
+	cmd := &CmdLinkStatus{Client: kubeClient.GetSkupperClient().SkupperV2alpha1(), Namespace: "test"}
+	cmd.output = "json"
+
+	r, w, err := os.Pipe()
+	assert.NilError(t, err)
+	oldStdout := os.Stdout
+	os.Stdout = w
+	defer func() { os.Stdout = oldStdout; w.Close() }()
+
+	err = cmd.Run()
+	assert.NilError(t, err)
+	w.Close()
+	data, err := io.ReadAll(r)
+	assert.NilError(t, err)
+	dec := json.NewDecoder(strings.NewReader(string(data)))
+	var names []string
+	for {
+		var link v2alpha1.Link
+		if err := dec.Decode(&link); err != nil {
+			if err == io.EOF {
+				break
+			}
+			continue
+		}
+		names = append(names, link.Name)
+	}
+	assert.DeepEqual(t, names, []string{"a-link", "m-link", "z-link"})
+}
 // --- helper methods
 
 func newCmdLinkStatusWithMocks(namespace string, k8sObjects []runtime.Object, skupperObjects []runtime.Object, fakeSkupperError string) (*CmdLinkStatus, error) {
