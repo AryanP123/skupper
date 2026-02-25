@@ -103,26 +103,30 @@ func (a *ExtendedBindings) ListenerUpdated(listener *skupperv2alpha1.Listener) {
 			slog.String("name", listener.Name),
 			slog.Any("error", err),
 		)
-	} else {
-		port := Port{
-			Name:       listener.Name,
-			Port:       listener.Spec.Port,
-			TargetPort: allocatedRouterPort,
-			Protocol:   listener.Protocol(),
+		return
+	}
+	port := Port{
+		Name:       listener.Name,
+		Port:       listener.Spec.Port,
+		TargetPort: allocatedRouterPort,
+		Protocol:   listener.Protocol(),
+	}
+	exposed := a.exposed.Expose(listener.Spec.Host, port)
+	if exposed == nil {
+		if existing, ok := a.exposed[listener.Spec.Host]; ok {
+			exposed = existing
 		}
-		if exposed := a.exposed.Expose(listener.Spec.Host, port); exposed != nil {
-			if err := a.context.Expose(exposed); err != nil {
-				//TODO: write error to listener status
-				bindings_logger.Error("Error exposing listener",
-					slog.String("namespace", listener.Namespace),
-					slog.String("name", listener.Name),
-					slog.Any("error", err))
-			} else {
-				bindings_logger.Info("Exposed listener",
-					slog.String("namespace", listener.Namespace),
-					slog.String("name", listener.Name))
-
-			}
+	}
+	if exposed != nil {
+		if err := a.context.Expose(exposed); err != nil {
+			bindings_logger.Error("Error exposing listener",
+				slog.String("namespace", listener.Namespace),
+				slog.String("name", listener.Name),
+				slog.Any("error", err))
+		} else {
+			bindings_logger.Info("Exposed listener",
+				slog.String("namespace", listener.Namespace),
+				slog.String("name", listener.Name))
 		}
 	}
 }

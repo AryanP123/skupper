@@ -936,6 +936,12 @@ func (s *Site) CheckListenerService(svc *corev1.Service) error {
 	return nil
 }
 
+func (s *Site) EnsureListenerService(listener *skupperv2alpha1.Listener) {
+	if listener != nil && s.site != nil {
+		s.bindings.ListenerUpdated(listener)
+	}
+}
+
 func (s *Site) CheckListener(name string, listener *skupperv2alpha1.Listener, svcExists bool) error {
 	if s.site == nil {
 		if listener == nil {

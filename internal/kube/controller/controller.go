@@ -288,6 +288,7 @@ func (c *Controller) init(stopCh <-chan struct{}) error {
 		)
 		_, svcExists := c.observedServices[listener.ObjectMeta.Namespace+"/"+listener.Spec.Host]
 		site.CheckListener(listener.ObjectMeta.Name, listener, svcExists)
+		site.EnsureListenerService(listener)
 	}
 	for _, la := range c.linkAccessWatcher.List() {
 		if !c.namespaces.isControlled(la.Namespace) {
@@ -392,13 +393,38 @@ func (c *Controller) checkListener(key string, listener *skupperv2alpha1.Listene
 	if listener != nil {
 		_, svcExists = c.observedServices[namespace+"/"+listener.Spec.Host]
 	}
-	return c.getSite(namespace).CheckListener(name, listener, svcExists)
+	err = c.getSite(namespace).CheckListener(name, listener, svcExists)
+	if err != nil {
+		return err
+	}
+	c.getSite(namespace).EnsureListenerService(listener)
+	return nil
+}
+
+func (c *Controller) ReconcileListenersForDeletedService(namespace, serviceName string) error {
+	if !c.namespaces.isControlled(namespace) {
+		return nil
+	}
+	for _, listener := range c.listenerWatcher.List() {
+		if listener.Namespace != namespace || listener.Spec.Host != serviceName {
+			continue
+		}
+		listenerKey := namespace + "/" + listener.Name
+		if err := c.checkListener(listenerKey, listener); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (c *Controller) checkListenerService(key string, svc *corev1.Service) error {
 	c.log.Debug("checkListenerService", slog.String("key", key))
 	if svc == nil {
-		return nil
+		namespace, serviceName, err := cache.SplitMetaNamespaceKey(key)
+		if err != nil {
+			return err
+		}
+		return c.ReconcileListenersForDeletedService(namespace, serviceName)
 	}
 	return c.getSite(svc.Namespace).CheckListenerService(svc)
 }
