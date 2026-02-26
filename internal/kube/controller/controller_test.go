@@ -625,6 +625,18 @@ func TestUpdate(t *testing.T) {
 				negativeServiceCheck("mysvc", "test"),
 			},
 		}, {
+			name: "listener service recreated when deleted",
+			skupperObjects: []runtime.Object{
+				f.site("mysite", "test", "", false, false),
+				f.listener("mylistener", "test", "mysvc", 8080),
+			},
+			functions: []WaitFunction{
+				isListenerStatusConditionTrue("mylistener", "test", skupperv2alpha1.CONDITION_TYPE_CONFIGURED),
+				serviceCheck("mysvc", "test").check,
+				deleteListenerService("mysvc", "test"),
+				waitForService("mysvc", "test"),
+			},
+		}, {
 			name: "exposePodsByName handles pod delete",
 			k8sObjects: []runtime.Object{
 				f.skupperNetworkStatus("test", f.networkStatusInfo("mysite", "test", map[string]string{"mysvc": "mysvc", "mysvc.mypod-1": "mysvc@mypod-1", "mysvc.mypod-2": "mysvc@mypod-2"}, map[string]string{"mysvc": "mysvc", "mysvc.mypod-1": "10.1.1.10", "mysvc.mypod-2": "10.1.1.11"}).info()),
@@ -798,6 +810,41 @@ func TestUpdate(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestListenerServiceRecreatedWhenDeleted(t *testing.T) {
+	runListenerServiceRecreatedWithFakeClient(t)
+}
+
+func runListenerServiceRecreatedWithFakeClient(t *testing.T) {
+	t.Helper()
+	flags := flag.NewFlagSet("", flag.ContinueOnError)
+	config, err := BoundConfig(flags)
+	assert.NilError(t, err)
+	clients, err := fakeclient.NewFakeClient("test", nil, []runtime.Object{
+		f.site("mysite", "test", "", false, false),
+		f.listener("mylistener", "test", "mysvc", 8080),
+	}, "")
+	assert.NilError(t, err)
+	enableSSA(clients.GetDynamicClient())
+	ctrl, err := NewController(clients, config, func(e *watchers.EventProcessor) { e.SetResyncShort(time.Second) })
+	assert.NilError(t, err)
+	stopCh := make(chan struct{})
+	err = ctrl.init(stopCh)
+	assert.NilError(t, err)
+	for i := 0; i < 2; i++ {
+		ctrl.eventProcessor.TestProcess()
+	}
+	for !isListenerStatusConditionTrue("mylistener", "test", skupperv2alpha1.CONDITION_TYPE_CONFIGURED)(t, clients) {
+		ctrl.eventProcessor.TestProcess()
+	}
+	for !serviceCheck("mysvc", "test").check(t, clients) {
+		ctrl.eventProcessor.TestProcess()
+	}
+	deleteListenerService("mysvc", "test")(t, clients)
+	for !waitForService("mysvc", "test")(t, clients) {
+		ctrl.eventProcessor.TestProcess()
 	}
 }
 
@@ -1929,6 +1976,17 @@ func (s *ServiceCheck) checkAbsent(t *testing.T, clients internalclient.Clients)
 	return false
 }
 
+func waitForService(name string, namespace string) WaitFunction {
+	return func(t *testing.T, clients internalclient.Clients) bool {
+		_, err := clients.GetKubeClient().CoreV1().Services(namespace).Get(context.Background(), name, metav1.GetOptions{})
+		if errors.IsNotFound(err) {
+			return false
+		}
+		assert.Assert(t, err)
+		return true
+	}
+}
+
 func updateListener(name string, namespace string, host string, port int) WaitFunction {
 	return func(t *testing.T, clients internalclient.Clients) bool {
 		ctxt := context.Background()
@@ -1947,6 +2005,14 @@ func negativeServiceCheck(name string, namespace string) WaitFunction {
 	return func(t *testing.T, clients internalclient.Clients) bool {
 		_, err := clients.GetKubeClient().CoreV1().Services(namespace).Get(context.Background(), name, metav1.GetOptions{})
 		assert.Assert(t, errors.IsNotFound(err))
+		return true
+	}
+}
+
+func deleteListenerService(serviceName string, namespace string) WaitFunction {
+	return func(t *testing.T, clients internalclient.Clients) bool {
+		err := clients.GetKubeClient().CoreV1().Services(namespace).Delete(context.Background(), serviceName, metav1.DeleteOptions{})
+		assert.Assert(t, err)
 		return true
 	}
 }
