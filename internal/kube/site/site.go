@@ -90,7 +90,7 @@ func NewSite(namespace string, eventProcessor *watchers.EventProcessor, certs ce
 	site.profiles = secrets.NewProfilesWatcher(
 		sslSecretsWatcher(namespace, eventProcessor),
 		eventProcessor.GetKubeClient(),
-		site.updateRouterConfig,
+		site.reconcileAfterTlsSecretChange,
 		site,
 		namespace,
 		logger.With(
@@ -736,6 +736,83 @@ func (s *Site) ownerReferences() []metav1.OwnerReference {
 	}
 }
 
+// tlsCredentialSecretPresent reports whether a Secret with the given name exists in the site namespace.
+// On unexpected API errors it returns true so a transient failure does not strip TLS-dependent configuration
+// (which would remove link connectors and break the mesh).
+func (s *Site) tlsCredentialSecretPresent(secretName string) bool {
+	if secretName == "" {
+		return false
+	}
+	_, err := s.clients.GetKubeClient().CoreV1().Secrets(s.namespace).Get(context.TODO(), secretName, metav1.GetOptions{})
+	if err == nil {
+		return true
+	}
+	if errors.IsNotFound(err) {
+		return false
+	}
+	s.logger.Warn("TLS secret lookup failed; assuming secret exists to avoid stripping TLS configuration",
+		slog.String("secret", secretName),
+		slog.Any("error", err))
+	return true
+}
+
+// eligibleLinksConfig applies only links whose TLS credential secrets are present.
+type eligibleLinksConfig struct {
+	site *Site
+}
+
+func (e *eligibleLinksConfig) Apply(config *qdr.RouterConfig) bool {
+	changed := false
+	eligible := map[string]struct{}{}
+	for name, link := range e.site.links {
+		d := link.Definition()
+		if d == nil {
+			continue
+		}
+		if d.Spec.TlsCredentials != "" && !e.site.tlsCredentialSecretPresent(d.Spec.TlsCredentials) {
+			continue
+		}
+		eligible[name] = struct{}{}
+		if link.Apply(config) {
+			changed = true
+		}
+	}
+	// Remove only connectors owned by links that are ineligible (e.g. missing TLS secret).
+	// Do not use site.LinkMap.Apply: its cleanup removes every non-auto-mesh connector not in the map,
+	// which would strip inter-router and other non-link connectors.
+	for name, link := range e.site.links {
+		if _, ok := eligible[name]; ok {
+			continue
+		}
+		d := link.Definition()
+		if d != nil && d.Spec.TlsCredentials != "" && !e.site.tlsCredentialSecretPresent(d.Spec.TlsCredentials) {
+			if site.NewRemoveConnector(name).Apply(config) {
+				changed = true
+			}
+		}
+	}
+	return changed
+}
+
+// reconcileAfterTlsSecretChange reapplies desired router configuration when TLS-related secrets change,
+// so resources that were omitted while a secret was missing are added once it exists.
+func (s *Site) reconcileAfterTlsSecretChange(pw qdr.ConfigUpdate) error {
+	groups := s.groups()
+	for i, group := range groups {
+		op := ConfigUpdateList{
+			s.bindings,
+			s,
+			s.linkAccess.DesiredConfigAllowingTlsSecrets(groups[:i], SSL_PROFILE_PATH, s.tlsCredentialSecretPresent),
+			&eligibleLinksConfig{site: s},
+			pw,
+		}
+		if err := s.updateRouterConfigForGroup(op, group); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func (s *Site) recoverRouterConfig(update bool) ([]*qdr.RouterConfig, error) {
 	list, err := s.clients.GetKubeClient().CoreV1().ConfigMaps(s.namespace).List(context.TODO(), metav1.ListOptions{
 		LabelSelector: "internal.skupper.io/router-config",
@@ -770,7 +847,7 @@ func (s *Site) recoverRouterConfig(update bool) ([]*qdr.RouterConfig, error) {
 	for i, group := range groups {
 		if config, ok := byName[group]; ok {
 			if update {
-				op := ConfigUpdateList{s.bindings, s, s.linkAccess.DesiredConfig(groups[:i], SSL_PROFILE_PATH)}
+				op := ConfigUpdateList{s.bindings, s, s.linkAccess.DesiredConfigAllowingTlsSecrets(groups[:i], SSL_PROFILE_PATH, s.tlsCredentialSecretPresent)}
 				if err := kubeqdr.UpdateRouterConfig(s.clients.GetKubeClient(), group, s.namespace, context.TODO(), op, s.labelling); err != nil {
 					s.logger.Error("Failed to update router config map",
 						slog.String("namespace", s.namespace),
@@ -783,7 +860,7 @@ func (s *Site) recoverRouterConfig(update bool) ([]*qdr.RouterConfig, error) {
 		} else {
 			routerConfig := s.initialRouterConfig()
 			s.bindings.Apply(routerConfig)
-			s.linkAccess.DesiredConfig(groups[:i], SSL_PROFILE_PATH).Apply(routerConfig)
+			s.linkAccess.DesiredConfigAllowingTlsSecrets(groups[:i], SSL_PROFILE_PATH, s.tlsCredentialSecretPresent).Apply(routerConfig)
 			if err := s.createRouterConfigForGroup(group, routerConfig); err != nil {
 				s.logger.Error("Failed to create router config map",
 					slog.String("namespace", s.namespace),
@@ -1176,6 +1253,14 @@ func (s *Site) link(linkconfig *skupperv2alpha1.Link) error {
 					config.UpdateProxyConfig(currentProxyConfig)
 				}
 			}
+			if linkconfig.Spec.TlsCredentials != "" && !s.tlsCredentialSecretPresent(linkconfig.Spec.TlsCredentials) {
+				s.logger.Info("Deferring link router configuration until TLS credentials secret exists",
+					slog.String("namespace", s.namespace),
+					slog.String("link", linkconfig.Name),
+					slog.String("secret", linkconfig.Spec.TlsCredentials),
+				)
+				return s.updateLinkConfiguredCondition(linkconfig, fmt.Errorf("TLS credentials secret %q not found", linkconfig.Spec.TlsCredentials))
+			}
 			err := s.updateRouterConfig(config)
 			return s.updateLinkConfiguredCondition(linkconfig, err)
 		} else {
@@ -1536,7 +1621,7 @@ func (s *Site) CheckRouterAccess(name string, la *skupperv2alpha1.RouterAccess) 
 	var errors []string
 	for i, group := range groups {
 		if specChanged || !la.IsConfigured() {
-			if err := s.updateRouterConfigForGroup(s.linkAccess.DesiredConfig(previousGroups, SSL_PROFILE_PATH), group); err != nil {
+			if err := s.updateRouterConfigForGroup(s.linkAccess.DesiredConfigAllowingTlsSecrets(previousGroups, SSL_PROFILE_PATH, s.tlsCredentialSecretPresent), group); err != nil {
 				s.logger.Error("Error updating router config",
 					slog.String("namespace", s.namespace),
 					slog.Any("error", err))
