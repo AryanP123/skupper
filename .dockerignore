@@ -2,6 +2,7 @@
 .circleci
 .github
 .codespellrc
+.git/
 
 # Documentation
 README.md
