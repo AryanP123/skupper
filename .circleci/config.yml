@@ -395,7 +395,6 @@ jobs:
       - run:
           name: Docker login
           command: docker login quay.io -u ${QUAY_LOGIN} -p ${QUAY_PASSWORD}
-      - run: make docker-build-source IMAGE_TAG="<< parameters.image_tag >>"
       - run: make docker-push-source IMAGE_TAG="<< parameters.image_tag >>"
   generate-operator-bundle:
     executor:
