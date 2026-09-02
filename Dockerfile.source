@@ -5,7 +5,7 @@ ARG GO_IMAGE_BASE_TAG=1.25
 FROM golang:${GO_IMAGE_BASE_TAG} AS vendor
 
 WORKDIR /go/src/app
-COPY go.mod go.sum .
+COPY go.mod go.sum ./
 RUN --mount=type=cache,target=/go/pkg/mod \
     go mod download
 COPY . .
