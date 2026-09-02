@@ -123,13 +123,13 @@ podman-push-must-gather:
 
 ## Source tree OCI image for downstream build contexts (see Dockerfile.source).
 docker-build-source:
-	${DOCKER} build $(SHARED_IMAGE_LABELS) -t "${REGISTRY}/${SOURCE_IMAGE}:${IMAGE_TAG}" -f Dockerfile.source .
+	${DOCKER} build --build-arg GO_IMAGE_BASE_TAG=$(GO_IMAGE_BASE_TAG) $(SHARED_IMAGE_LABELS) -t "${REGISTRY}/${SOURCE_IMAGE}:${IMAGE_TAG}" -f Dockerfile.source .
 
 docker-push-source: docker-build-source
 	${DOCKER} push "${REGISTRY}/${SOURCE_IMAGE}:${IMAGE_TAG}"
 
 podman-build-source:
-	${PODMAN} build $(SHARED_IMAGE_LABELS) -t "${REGISTRY}/${SOURCE_IMAGE}:${IMAGE_TAG}" -f Dockerfile.source .
+	${PODMAN} build --build-arg GO_IMAGE_BASE_TAG=$(GO_IMAGE_BASE_TAG) $(SHARED_IMAGE_LABELS) -t "${REGISTRY}/${SOURCE_IMAGE}:${IMAGE_TAG}" -f Dockerfile.source .
 
 podman-push-source: podman-build-source
 	${PODMAN} push "${REGISTRY}/${SOURCE_IMAGE}:${IMAGE_TAG}"

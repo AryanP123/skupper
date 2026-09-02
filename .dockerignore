@@ -3,6 +3,7 @@
 .github
 .codespellrc
 .git/
+vendor/
 
 # Documentation
 README.md
