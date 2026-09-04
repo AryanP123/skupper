@@ -6,22 +6,25 @@ import (
 	"strings"
 
 	internalclient "github.com/skupperproject/skupper/internal/kube/client"
+	"github.com/skupperproject/skupper/internal/network"
 	skupperv2alpha1 "github.com/skupperproject/skupper/pkg/apis/skupper/v2alpha1"
 )
 
 type BindingStatus struct {
 	connectors map[string][]string
 	listeners  map[string][]string
+	addresses  []network.AddressInfo
 	client     internalclient.Clients
 	errors     []string
 	logger     *slog.Logger
 }
 
-func newBindingStatus(client internalclient.Clients, network []skupperv2alpha1.SiteRecord) *BindingStatus {
+func newBindingStatus(client internalclient.Clients, network []skupperv2alpha1.SiteRecord, addresses []network.AddressInfo) *BindingStatus {
 	s := &BindingStatus{
 		client:     client,
 		connectors: map[string][]string{},
 		listeners:  map[string][]string{},
+		addresses:  addresses,
 		logger: slog.New(slog.Default().Handler()).With(
 			slog.String("component", "kube.site.binding_status"),
 		),
@@ -48,8 +51,32 @@ func (s *BindingStatus) populate(network []skupperv2alpha1.SiteRecord) {
 	}
 }
 
+func (s *BindingStatus) hasMatchingConnector(routingKey string) bool {
+	if len(s.connectors[routingKey]) > 0 {
+		return true
+	}
+	for _, address := range s.addresses {
+		if address.Name == routingKey {
+			return address.ConnectorCount > 0
+		}
+	}
+	return false
+}
+
+func (s *BindingStatus) hasMatchingListener(routingKey string) bool {
+	if len(s.listeners[routingKey]) > 0 {
+		return true
+	}
+	for _, address := range s.addresses {
+		if address.Name == routingKey {
+			return address.ListenerCount > 0
+		}
+	}
+	return false
+}
+
 func (s *BindingStatus) updateMatchingListenerCount(connector *skupperv2alpha1.Connector) *skupperv2alpha1.Connector {
-	if connector.SetHasMatchingListener(len(s.listeners[connector.Spec.RoutingKey]) > 0) {
+	if connector.SetHasMatchingListener(s.hasMatchingListener(connector.Spec.RoutingKey)) {
 		updated, err := updateConnectorStatus(s.client, connector)
 		if err != nil {
 			s.logger.Error("Failed to update status for connector",
@@ -64,7 +91,7 @@ func (s *BindingStatus) updateMatchingListenerCount(connector *skupperv2alpha1.C
 }
 
 func (s *BindingStatus) updateMatchingConnectorCount(listener *skupperv2alpha1.Listener) *skupperv2alpha1.Listener {
-	if listener.SetHasMatchingConnector(len(s.connectors[listener.Spec.RoutingKey]) > 0) {
+	if listener.SetHasMatchingConnector(s.hasMatchingConnector(listener.Spec.RoutingKey)) {
 		updated, err := updateListenerStatus(s.client, listener)
 		if err != nil {
 			s.logger.Error("Failed to update status for listener",
@@ -80,7 +107,11 @@ func (s *BindingStatus) updateMatchingConnectorCount(listener *skupperv2alpha1.L
 
 func (s *BindingStatus) updateMatchingListenerCountForAttachedConnector(connector *AttachedConnector) {
 	if connector.binding != nil {
-		connector.setMatchingListenerCount(len(s.listeners[connector.binding.Spec.RoutingKey]))
+		count := len(s.listeners[connector.binding.Spec.RoutingKey])
+		if count == 0 && s.hasMatchingListener(connector.binding.Spec.RoutingKey) {
+			count = 1
+		}
+		connector.setMatchingListenerCount(count)
 	}
 }
 
@@ -90,7 +121,7 @@ func (s *BindingStatus) updateMultiKeyListenerDestination(mkl *skupperv2alpha1.M
 	// Find which routing keys have matching connectors, preserving priority order
 	var reachable []string
 	for _, key := range routingKeys {
-		if len(s.connectors[key]) > 0 {
+		if s.hasMatchingConnector(key) {
 			reachable = append(reachable, key)
 		}
 	}

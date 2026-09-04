@@ -688,7 +688,7 @@ func (c *Controller) networkStatusUpdate(key string, cm *corev1.ConfigMap) error
 		return nil
 	}
 	c.log.Debug("Updating network status", slog.String("site", key))
-	return c.getSite(cm.ObjectMeta.Namespace).NetworkStatusUpdated(network.ExtractSiteRecords(status))
+	return c.getSite(cm.ObjectMeta.Namespace).NetworkStatusUpdated(network.ExtractSiteRecords(status), status.Addresses)
 }
 
 func filter[V any](controller *Controller, handler func(string, V) error) func(string, V) error {

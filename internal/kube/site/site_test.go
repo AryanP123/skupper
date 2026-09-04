@@ -1312,7 +1312,7 @@ func Test_NetworkStatusUpdate(t *testing.T) {
 				s.links[tt.linkconfig.ObjectMeta.Name] = link
 			}
 
-			if err := s.NetworkStatusUpdated(tt.args.siteRecord); (err != nil) != tt.wantErr {
+			if err := s.NetworkStatusUpdated(tt.args.siteRecord, nil); (err != nil) != tt.wantErr {
 				t.Errorf("Site.NetworkStatusUpdated() error = %v, wantErr %v", err, tt.wantErr)
 			}
 

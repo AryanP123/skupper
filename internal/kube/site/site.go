@@ -1540,7 +1540,7 @@ func (s *Site) CheckSslAndProxyProfiles(config *qdr.RouterConfig) error {
 	return nil
 }
 
-func (s *Site) NetworkStatusUpdated(network []skupperv2alpha1.SiteRecord) error {
+func (s *Site) NetworkStatusUpdated(network []skupperv2alpha1.SiteRecord, addresses []internalnetwork.AddressInfo) error {
 	if s.site == nil {
 		return nil
 	}
@@ -1573,7 +1573,7 @@ func (s *Site) NetworkStatusUpdated(network []skupperv2alpha1.SiteRecord) error 
 		}
 	}
 
-	bindingStatus := newBindingStatus(s.clients, network)
+	bindingStatus := newBindingStatus(s.clients, network, addresses)
 	s.bindings.Map(bindingStatus.updateMatchingListenerCount, bindingStatus.updateMatchingConnectorCount)
 	s.bindings.MapOverMultiKeyListeners(bindingStatus.updateMultiKeyListenerDestination)
 	s.logger.Debug("Updating matching listeners for attached connectors")
