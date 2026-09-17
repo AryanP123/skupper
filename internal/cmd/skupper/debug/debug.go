@@ -70,17 +70,17 @@ func CmdDebugCertFactory(configuredPlatform common.Platform) *cobra.Command {
 	nonKubeCommand := nonkube.NewCmdDebugCert()
 
 	cmdDesc := common.SkupperCmdDescription{
-		Use:   "cert [name]",
+		Use:   "cert-inspect [name]",
 		Short: "Inspect X.509 certificates in use by Skupper",
 		Long: `Decode and display key fields of X.509 certificates managed by Skupper,
 including subject, issuer, validity period, SANs, and public key information.
 
 Without a name, all certificates in the namespace are listed. With a name,
 detailed information for that certificate is shown.`,
-		Example: `skupper debug cert
-skupper debug cert skupper-local-server
-skupper debug cert --file /path/to/tls.crt
-skupper debug cert -o yaml`,
+		Example: `skupper debug cert-inspect
+skupper debug cert-inspect skupper-local-server
+skupper debug cert-inspect --file /path/to/tls.crt
+skupper debug cert-inspect -o yaml`,
 	}
 
 	cmd := common.ConfigureCobraCommand(configuredPlatform, cmdDesc, kubeCommand, nonKubeCommand)

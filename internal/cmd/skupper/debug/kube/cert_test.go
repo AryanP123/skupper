@@ -9,6 +9,7 @@ import (
 	fakeclient "github.com/skupperproject/skupper/internal/kube/client/fake"
 	"github.com/skupperproject/skupper/pkg/apis/skupper/v2alpha1"
 	"gotest.tools/v3/assert"
+	corev1 "k8s.io/api/core/v1"
 	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 )
@@ -66,6 +67,20 @@ func TestCmdDebugCert_certInfoFromSecret(t *testing.T) {
 	assert.Equal(t, "my.example.com", info.Subject)
 	assert.Equal(t, "Ready", info.Status)
 	assert.Equal(t, "2027-01-01T00:00:00Z", info.CrExpiration)
+}
+
+func TestCmdDebugCert_RunWithSecretOnly(t *testing.T) {
+	linkSecret, err := certs.GenerateSecret("link-profile", "link.example.com", []string{"link.example.com"}, 86400000000000, nil)
+	assert.NilError(t, err)
+	linkSecret.Namespace = "test"
+	linkSecret.Type = corev1.SecretTypeTLS
+
+	cmd, err := newCmdDebugCertWithMocks("test", []runtime.Object{linkSecret}, nil, "")
+	assert.Assert(t, err)
+	cmd.certName = "link-profile"
+
+	err = cmd.Run()
+	assert.NilError(t, err)
 }
 
 func TestCmdDebugCert_RunWithCertificateCR(t *testing.T) {

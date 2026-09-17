@@ -1,16 +1,23 @@
 package nonkube
 
 import (
+	"bufio"
 	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/skupperproject/skupper/internal/cmd/skupper/common"
 	certdisplay "github.com/skupperproject/skupper/internal/cmd/skupper/debug/cert"
 	"github.com/skupperproject/skupper/internal/utils/validator"
 	"github.com/skupperproject/skupper/pkg/nonkube/api"
 	"github.com/spf13/cobra"
+	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/runtime/serializer/yaml"
+	yamlutil "k8s.io/apimachinery/pkg/util/yaml"
 )
 
 type CmdDebugCert struct {
@@ -97,6 +104,7 @@ func (cmd *CmdDebugCert) Run() error {
 
 func (cmd *CmdDebugCert) collectCerts() ([]certdisplay.Info, error) {
 	var infos []certdisplay.Info
+	var err error
 	seen := map[string]bool{}
 
 	certPaths := []struct {
@@ -105,38 +113,112 @@ func (cmd *CmdDebugCert) collectCerts() ([]certdisplay.Info, error) {
 	}{
 		{api.CertificatesPath, ""},
 		{api.InputCertificatesPath, "input/"},
+		{api.IssuersPath, "issuers/"},
+		{api.InputIssuersPath, "input/issuers/"},
 	}
 
 	for _, cp := range certPaths {
-		dir := api.GetInternalOutputPath(cmd.namespace, cp.basePath)
-		entries, err := os.ReadDir(dir)
+		infos, err = cmd.collectCertsFromDir(cp.basePath, cp.prefix, seen, infos)
 		if err != nil {
-			continue
-		}
-		for _, entry := range entries {
-			if !entry.IsDir() {
-				continue
-			}
-			name := entry.Name()
-			displayName := cp.prefix + name
-			if seen[displayName] {
-				continue
-			}
-			certFile := filepath.Join(dir, name, "tls.crt")
-			data, err := os.ReadFile(certFile)
-			if err != nil {
-				continue
-			}
-			info, err := certdisplay.ParseCertificate(displayName, data)
-			if err != nil {
-				return nil, fmt.Errorf("failed to parse certificate %s: %w", displayName, err)
-			}
-			seen[displayName] = true
-			infos = append(infos, *info)
+			return nil, err
 		}
 	}
 
+	return cmd.collectInputResourceSecrets(seen, infos)
+}
+
+func (cmd *CmdDebugCert) collectCertsFromDir(basePath api.InternalPath, prefix string, seen map[string]bool, infos []certdisplay.Info) ([]certdisplay.Info, error) {
+	dir := api.GetInternalOutputPath(cmd.namespace, basePath)
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return infos, nil
+	}
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+		name := entry.Name()
+		displayName := prefix + name
+		if seen[displayName] {
+			continue
+		}
+		certFile := filepath.Join(dir, name, "tls.crt")
+		data, err := os.ReadFile(certFile)
+		if err != nil {
+			continue
+		}
+		info, err := certdisplay.ParseCertificate(displayName, data)
+		if err != nil {
+			return nil, fmt.Errorf("failed to parse certificate %s: %w", displayName, err)
+		}
+		seen[displayName] = true
+		infos = append(infos, *info)
+	}
 	return infos, nil
+}
+
+func (cmd *CmdDebugCert) collectInputResourceSecrets(seen map[string]bool, infos []certdisplay.Info) ([]certdisplay.Info, error) {
+	dir := api.GetInternalOutputPath(cmd.namespace, api.InputSiteStatePath)
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return infos, nil
+	}
+	for _, entry := range entries {
+		if entry.IsDir() {
+			continue
+		}
+		filename := entry.Name()
+		if !strings.HasPrefix(filename, "Secret-") {
+			continue
+		}
+		if !strings.HasSuffix(filename, ".yaml") && !strings.HasSuffix(filename, ".yml") {
+			continue
+		}
+		secret, err := decodeSecretFile(filepath.Join(dir, filename))
+		if err != nil {
+			return nil, fmt.Errorf("failed to decode secret from %s: %w", filename, err)
+		}
+		if secret.Data == nil || len(secret.Data["tls.crt"]) == 0 {
+			continue
+		}
+		displayName := "input/secret/" + secret.Name
+		if seen[displayName] {
+			continue
+		}
+		info, err := certdisplay.ParseCertificate(displayName, secret.Data["tls.crt"])
+		if err != nil {
+			return nil, fmt.Errorf("failed to parse certificate %s: %w", displayName, err)
+		}
+		seen[displayName] = true
+		infos = append(infos, *info)
+	}
+	return infos, nil
+}
+
+func decodeSecretFile(path string) (*corev1.Secret, error) {
+	file, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer file.Close()
+
+	yamlDecoder := yamlutil.NewYAMLOrJSONDecoder(bufio.NewReader(file), 1024)
+	var rawObj runtime.RawExtension
+	if err := yamlDecoder.Decode(&rawObj); err != nil {
+		return nil, err
+	}
+	obj, gvk, err := yaml.NewDecodingSerializer(unstructured.UnstructuredJSONScheme).Decode(rawObj.Raw, nil, nil)
+	if err != nil {
+		return nil, err
+	}
+	if gvk.Kind != "Secret" {
+		return nil, fmt.Errorf("expected Secret, got %s", gvk.Kind)
+	}
+	var secret corev1.Secret
+	if err := runtime.DefaultUnstructuredConverter.FromUnstructured(obj.(runtime.Unstructured).UnstructuredContent(), &secret); err != nil {
+		return nil, err
+	}
+	return &secret, nil
 }
 
 func (cmd *CmdDebugCert) WaitUntil() error { return nil }

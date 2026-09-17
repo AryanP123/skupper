@@ -9,11 +9,13 @@ import (
 	"github.com/skupperproject/skupper/internal/cmd/skupper/common/utils"
 	certdisplay "github.com/skupperproject/skupper/internal/cmd/skupper/debug/cert"
 	"github.com/skupperproject/skupper/internal/kube/client"
+	"github.com/skupperproject/skupper/internal/kube/secrets"
 	"github.com/skupperproject/skupper/internal/utils/validator"
 	"github.com/skupperproject/skupper/pkg/apis/skupper/v2alpha1"
 	skupperv2alpha1 "github.com/skupperproject/skupper/pkg/generated/client/clientset/versioned/typed/skupper/v2alpha1"
 	"github.com/spf13/cobra"
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 )
@@ -100,36 +102,84 @@ func (cmd *CmdDebugCert) Run() error {
 	}
 
 	if cmd.certName != "" {
-		certificate, err := cmd.Client.Certificates(cmd.Namespace).Get(context.TODO(), cmd.certName, metav1.GetOptions{})
-		if err != nil {
-			return err
-		}
-		info, err := cmd.certInfoFromCR(certificate)
+		info, err := cmd.certInfoByName(cmd.certName)
 		if err != nil {
 			return err
 		}
 		return certdisplay.Display([]certdisplay.Info{*info}, cmd.output, true)
 	}
 
-	certificateList, err := cmd.Client.Certificates(cmd.Namespace).List(context.TODO(), metav1.ListOptions{})
+	infos, err := cmd.collectCertInfos()
 	if err != nil {
-		return utils.HandleMissingCrds(err)
+		return err
 	}
-
-	if certificateList == nil || len(certificateList.Items) == 0 {
-		fmt.Println("No certificate resources found in the namespace")
+	if len(infos) == 0 {
+		fmt.Println("No certificates found in the namespace")
 		return nil
 	}
+	return certdisplay.Display(infos, cmd.output, false)
+}
 
+func (cmd *CmdDebugCert) certInfoByName(name string) (*certdisplay.Info, error) {
+	certificate, err := cmd.Client.Certificates(cmd.Namespace).Get(context.TODO(), name, metav1.GetOptions{})
+	if err == nil {
+		return cmd.certInfoFromCR(certificate)
+	}
+	if !apierrors.IsNotFound(err) {
+		return nil, err
+	}
+
+	secret, err := cmd.KubeClient.CoreV1().Secrets(cmd.Namespace).Get(context.TODO(), name, metav1.GetOptions{})
+	if err != nil {
+		return nil, err
+	}
+	if !secrets.IsTlsCredentialSecret(secret) {
+		return nil, fmt.Errorf("secret %s is not a TLS credential", name)
+	}
+	return cmd.certInfoFromSecret(name, secret, "", "")
+}
+
+func (cmd *CmdDebugCert) collectCertInfos() ([]certdisplay.Info, error) {
+	seen := map[string]bool{}
 	var infos []certdisplay.Info
+
+	certificateList, err := cmd.Client.Certificates(cmd.Namespace).List(context.TODO(), metav1.ListOptions{})
+	if err != nil {
+		return nil, utils.HandleMissingCrds(err)
+	}
+
 	for _, certificate := range certificateList.Items {
 		info, err := cmd.certInfoFromCR(&certificate)
 		if err != nil {
-			return err
+			return nil, err
+		}
+		seen[certificate.Name] = true
+		infos = append(infos, *info)
+	}
+
+	secretList, err := cmd.KubeClient.CoreV1().Secrets(cmd.Namespace).List(context.TODO(), metav1.ListOptions{})
+	if err != nil {
+		return nil, err
+	}
+
+	for _, secret := range secretList.Items {
+		if seen[secret.Name] {
+			continue
+		}
+		if !secrets.IsTlsCredentialSecret(&secret) {
+			continue
+		}
+		if _, ok := secret.Data["tls.crt"]; !ok {
+			continue
+		}
+		info, err := cmd.certInfoFromSecret(secret.Name, &secret, "", "")
+		if err != nil {
+			return nil, err
 		}
 		infos = append(infos, *info)
 	}
-	return certdisplay.Display(infos, cmd.output, false)
+
+	return infos, nil
 }
 
 func (cmd *CmdDebugCert) certInfoFromCR(certificate *v2alpha1.Certificate) (*certdisplay.Info, error) {
