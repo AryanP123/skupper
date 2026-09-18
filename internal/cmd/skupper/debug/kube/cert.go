@@ -136,7 +136,7 @@ func (cmd *CmdDebugCert) certInfoByName(name string) (*certdisplay.Info, error) 
 	if !secrets.IsTlsCredentialSecret(secret) {
 		return nil, fmt.Errorf("secret %s is not a TLS credential", name)
 	}
-	return cmd.certInfoFromSecret(name, secret, "", "")
+	return cmd.certInfoFromSecret(name, secret, "", "", nil)
 }
 
 func (cmd *CmdDebugCert) collectCertInfos() ([]certdisplay.Info, error) {
@@ -172,7 +172,7 @@ func (cmd *CmdDebugCert) collectCertInfos() ([]certdisplay.Info, error) {
 		if _, ok := secret.Data["tls.crt"]; !ok {
 			continue
 		}
-		info, err := cmd.certInfoFromSecret(secret.Name, &secret, "", "")
+		info, err := cmd.certInfoFromSecret(secret.Name, &secret, "", "", nil)
 		if err != nil {
 			return nil, err
 		}
@@ -187,10 +187,11 @@ func (cmd *CmdDebugCert) certInfoFromCR(certificate *v2alpha1.Certificate) (*cer
 	if err != nil {
 		return nil, fmt.Errorf("failed to get secret for certificate %s: %w", certificate.Name, err)
 	}
-	return cmd.certInfoFromSecret(certificate.Name, secret, string(certificate.Status.StatusType), certificate.Status.Expiration)
+	isSigning := certificate.Spec.Signing
+	return cmd.certInfoFromSecret(certificate.Name, secret, string(certificate.Status.StatusType), certificate.Status.Expiration, &isSigning)
 }
 
-func (cmd *CmdDebugCert) certInfoFromSecret(name string, secret *corev1.Secret, status, crExpiration string) (*certdisplay.Info, error) {
+func (cmd *CmdDebugCert) certInfoFromSecret(name string, secret *corev1.Secret, status, crExpiration string, isSigning *bool) (*certdisplay.Info, error) {
 	certData, ok := secret.Data["tls.crt"]
 	if !ok || len(certData) == 0 {
 		return nil, fmt.Errorf("secret %s does not contain tls.crt", name)
@@ -201,6 +202,7 @@ func (cmd *CmdDebugCert) certInfoFromSecret(name string, secret *corev1.Secret, 
 	}
 	info.Status = status
 	info.CrExpiration = crExpiration
+	info.IsSigningCert = isSigning
 	return info, nil
 }
 

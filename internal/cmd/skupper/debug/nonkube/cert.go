@@ -108,17 +108,18 @@ func (cmd *CmdDebugCert) collectCerts() ([]certdisplay.Info, error) {
 	seen := map[string]bool{}
 
 	certPaths := []struct {
-		basePath api.InternalPath
-		prefix   string
+		basePath  api.InternalPath
+		prefix    string
+		isSigning bool
 	}{
-		{api.CertificatesPath, ""},
-		{api.InputCertificatesPath, "input/"},
-		{api.IssuersPath, "issuers/"},
-		{api.InputIssuersPath, "input/issuers/"},
+		{api.CertificatesPath, "", false},
+		{api.InputCertificatesPath, "input/", false},
+		{api.IssuersPath, "issuers/", true},
+		{api.InputIssuersPath, "input/issuers/", true},
 	}
 
 	for _, cp := range certPaths {
-		infos, err = cmd.collectCertsFromDir(cp.basePath, cp.prefix, seen, infos)
+		infos, err = cmd.collectCertsFromDir(cp.basePath, cp.prefix, cp.isSigning, seen, infos)
 		if err != nil {
 			return nil, err
 		}
@@ -127,11 +128,14 @@ func (cmd *CmdDebugCert) collectCerts() ([]certdisplay.Info, error) {
 	return cmd.collectInputResourceSecrets(seen, infos)
 }
 
-func (cmd *CmdDebugCert) collectCertsFromDir(basePath api.InternalPath, prefix string, seen map[string]bool, infos []certdisplay.Info) ([]certdisplay.Info, error) {
+func (cmd *CmdDebugCert) collectCertsFromDir(basePath api.InternalPath, prefix string, isSigning bool, seen map[string]bool, infos []certdisplay.Info) ([]certdisplay.Info, error) {
 	dir := api.GetInternalOutputPath(cmd.namespace, basePath)
 	entries, err := os.ReadDir(dir)
 	if err != nil {
-		return infos, nil
+		if errors.Is(err, os.ErrNotExist) {
+			return infos, nil
+		}
+		return nil, fmt.Errorf("failed to read certificate directory %s: %w", dir, err)
 	}
 	for _, entry := range entries {
 		if !entry.IsDir() {
@@ -151,6 +155,8 @@ func (cmd *CmdDebugCert) collectCertsFromDir(basePath api.InternalPath, prefix s
 		if err != nil {
 			return nil, fmt.Errorf("failed to parse certificate %s: %w", displayName, err)
 		}
+		signing := isSigning
+		info.IsSigningCert = &signing
 		seen[displayName] = true
 		infos = append(infos, *info)
 	}
@@ -161,7 +167,10 @@ func (cmd *CmdDebugCert) collectInputResourceSecrets(seen map[string]bool, infos
 	dir := api.GetInternalOutputPath(cmd.namespace, api.InputSiteStatePath)
 	entries, err := os.ReadDir(dir)
 	if err != nil {
-		return infos, nil
+		if errors.Is(err, os.ErrNotExist) {
+			return infos, nil
+		}
+		return nil, fmt.Errorf("failed to read certificate directory %s: %w", dir, err)
 	}
 	for _, entry := range entries {
 		if entry.IsDir() {

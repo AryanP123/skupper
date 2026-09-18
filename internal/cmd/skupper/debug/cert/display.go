@@ -28,6 +28,7 @@ type Info struct {
 	EmailAddresses     []string `json:"emailAddresses,omitempty"`
 	URIs               []string `json:"uris,omitempty"`
 	IsCA               bool     `json:"isCA"`
+	IsSigningCert      *bool    `json:"isSigningCert,omitempty"`
 	PublicKeyAlgorithm string   `json:"publicKeyAlgorithm"`
 	PublicKeySize      int      `json:"publicKeySize"`
 	SignatureAlgorithm string   `json:"signatureAlgorithm"`
@@ -136,6 +137,9 @@ func displayDetail(info Info) {
 	fmt.Printf("Not Before\t: %s\n", info.NotBefore)
 	fmt.Printf("Not After\t: %s\n", info.NotAfter)
 	fmt.Printf("Is CA\t\t: %t\n", info.IsCA)
+	if info.IsSigningCert != nil {
+		fmt.Printf("Is Signing Cert\t: %t\n", *info.IsSigningCert)
+	}
 	fmt.Printf("SANs\t\t: %s\n", formatSANs(&info))
 	if info.PublicKeySize > 0 {
 		fmt.Printf("Public Key\t: %s (%d bits)\n", info.PublicKeyAlgorithm, info.PublicKeySize)

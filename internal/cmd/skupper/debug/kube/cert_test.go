@@ -61,12 +61,13 @@ func TestCmdDebugCert_certInfoFromSecret(t *testing.T) {
 	assert.NilError(t, err)
 
 	cmd := NewCmdDebugCert()
-	info, err := cmd.certInfoFromSecret("my-cert", leafSecret, "Ready", "2027-01-01T00:00:00Z")
+	info, err := cmd.certInfoFromSecret("my-cert", leafSecret, "Ready", "2027-01-01T00:00:00Z", nil)
 	assert.NilError(t, err)
 	assert.Equal(t, "my-cert", info.Name)
 	assert.Equal(t, "my.example.com", info.Subject)
 	assert.Equal(t, "Ready", info.Status)
 	assert.Equal(t, "2027-01-01T00:00:00Z", info.CrExpiration)
+	assert.Assert(t, info.IsSigningCert == nil)
 }
 
 func TestCmdDebugCert_RunWithSecretOnly(t *testing.T) {
@@ -90,6 +91,9 @@ func TestCmdDebugCert_RunWithCertificateCR(t *testing.T) {
 
 	certCR := &v2alpha1.Certificate{
 		ObjectMeta: v1.ObjectMeta{Name: "skupper-local-server", Namespace: "test"},
+		Spec: v2alpha1.CertificateSpec{
+			Signing: false,
+		},
 		Status: v2alpha1.CertificateStatus{
 			Status: v2alpha1.Status{
 				StatusType: v2alpha1.StatusReady,
@@ -104,6 +108,37 @@ func TestCmdDebugCert_RunWithCertificateCR(t *testing.T) {
 
 	err = cmd.Run()
 	assert.NilError(t, err)
+
+	info, err := cmd.certInfoFromCR(certCR)
+	assert.NilError(t, err)
+	assert.Assert(t, info.IsSigningCert != nil)
+	assert.Equal(t, false, *info.IsSigningCert)
+}
+
+func TestCmdDebugCert_SigningFromCR(t *testing.T) {
+	caSecret, err := certs.GenerateSecret("skupper-site-ca", "site-ca.example.com", nil, 0, nil)
+	assert.NilError(t, err)
+	caSecret.Namespace = "test"
+
+	certCR := &v2alpha1.Certificate{
+		ObjectMeta: v1.ObjectMeta{Name: "skupper-site-ca", Namespace: "test"},
+		Spec: v2alpha1.CertificateSpec{
+			Signing: true,
+		},
+		Status: v2alpha1.CertificateStatus{
+			Status: v2alpha1.Status{
+				StatusType: v2alpha1.StatusReady,
+			},
+		},
+	}
+
+	cmd, err := newCmdDebugCertWithMocks("test", []runtime.Object{caSecret}, []runtime.Object{certCR}, "")
+	assert.Assert(t, err)
+
+	info, err := cmd.certInfoFromCR(certCR)
+	assert.NilError(t, err)
+	assert.Assert(t, info.IsSigningCert != nil)
+	assert.Equal(t, true, *info.IsSigningCert)
 }
 
 func newCmdDebugCertWithMocks(namespace string, k8sObjects []runtime.Object, skupperObjects []runtime.Object, fakeSkupperError string) (*CmdDebugCert, error) {
