@@ -3,6 +3,8 @@ package sweeper
 import (
 	"fmt"
 	"math"
+	"os"
+	"strings"
 	"time"
 )
 
@@ -21,6 +23,14 @@ type Config struct {
 	// Ports limits the sweep to connections on these router-side ports. Empty
 	// means every port.
 	Ports []int
+	// States limits to connections whose kernel socket is in one of these
+	// ss-style TCP states (after NormalizeStates). Empty means any state.
+	States []string
+	// RoutingKeys limits to connections whose correlated routing key matches.
+	// Empty means any routing key.
+	RoutingKeys []string
+	// Output is "text" (default) or "json".
+	Output string
 	// Exec runs skmanage and the socket query.
 	Exec Execer
 	// SkmanageExtraArgs is appended to every skmanage invocation — e.g.
@@ -37,9 +47,8 @@ type Result struct {
 }
 
 // Run ties the stages together: Gather (gather.go) collects
-// raw router + kernel state, Evaluate (criteria.go) applies the idle-time
-// criteria against that state, and killAll (kill.go) carries out whatever
-// Evaluate decided.
+// raw router + kernel state, filters apply, Evaluate (criteria.go) applies the
+// idle-time criteria, and killAll (kill.go) carries out whatever Evaluate decided.
 func Run(cfg Config) (Result, error) {
 	if cfg.IdleThresholdSecs < 0 || int64(cfg.IdleThresholdSecs) > MaxIdleThreshold {
 		return Result{}, fmt.Errorf("idle threshold must be between 0 and %d seconds", MaxIdleThreshold)
@@ -50,66 +59,112 @@ func Run(cfg Config) (Result, error) {
 	if err := ValidatePorts(cfg.Ports); err != nil {
 		return Result{}, err
 	}
+	states, err := NormalizeStates(cfg.States)
+	if err != nil {
+		return Result{}, err
+	}
+	if err := ValidateOutput(cfg.Output); err != nil {
+		return Result{}, err
+	}
+	cfg.Output = NormalizeOutput(cfg.Output)
+	cfg.States = states
+
 	snap, err := Gather(cfg.Exec, cfg.Skmanage, cfg.URL, cfg.SkmanageExtraArgs...)
 	if err != nil {
 		return Result{}, err
 	}
 
-	if len(cfg.Ports) > 0 {
-		matched := FilterByPorts(snap.TCPConns, cfg.Ports)
-		if len(matched) == 0 {
-			logf("No connections found on port %s (%d TCP adaptor connection(s) on other ports).",
-				FormatPorts(cfg.Ports), len(snap.TCPConns))
+	snap.TCPConns = applyFilters(snap, cfg)
+	if len(cfg.Ports) > 0 || len(cfg.States) > 0 || len(cfg.RoutingKeys) > 0 {
+		if len(snap.TCPConns) == 0 {
+			msg := filterEmptyMessage(cfg)
+			if cfg.Output == OutputJSON {
+				_ = writeJSON(os.Stdout, []ConnReport{})
+			} else {
+				logf("%s", msg)
+			}
 			return Result{}, nil
 		}
-		snap.TCPConns = matched
 	}
 
 	toKill := Evaluate(snap, time.Duration(cfg.IdleThresholdSecs)*time.Second)
-	logf("total:%d  idle-orphan:%d", len(snap.TCPConns), len(toKill))
+	if cfg.Output != OutputJSON {
+		logf("total:%d  idle-orphan:%d", len(snap.TCPConns), len(toKill))
+	}
 
 	if len(toKill) == 0 {
-		logf("No idle/orphaned connections found.")
+		if cfg.Output == OutputJSON {
+			_ = writeJSON(os.Stdout, []ConnReport{})
+		} else {
+			logf("No idle/orphaned connections found.")
+		}
 		return Result{Total: len(snap.TCPConns)}, nil
 	}
 
 	if !cfg.Execute {
-		logf("Found %d idle connection(s) — re-run with --execute to close them:", len(toKill))
-		for _, d := range toKill {
-			fmt.Printf("  id=%-6s  host=%-25s  dir=%s  uptime=%-10s  reason=%s\n",
-				d.Conn.Identity, d.Conn.Host, d.Conn.Dir, fmtSeconds(d.Conn.UptimeSeconds), d.Reason)
+		if cfg.Output != OutputJSON {
+			logf("Found %d idle connection(s) — re-run with --execute to close them:", len(toKill))
+		}
+		if err := printDecisions(os.Stdout, toKill, cfg.Output); err != nil {
+			return Result{}, err
 		}
 		return Result{Total: len(snap.TCPConns), Skipped: len(toKill)}, nil
 	}
 
-	logf("--- KILLING %d connection(s) ---", len(toKill))
-	killed, failed := killAll(cfg.Exec, cfg.Skmanage, cfg.URL, cfg.SkmanageExtraArgs, toKill)
+	if cfg.Output != OutputJSON {
+		logf("--- KILLING %d connection(s) ---", len(toKill))
+	}
+	killed, failed, reports := killAll(cfg.Exec, cfg.Skmanage, cfg.URL, cfg.SkmanageExtraArgs, toKill, cfg.Output)
+	if cfg.Output == OutputJSON {
+		if err := writeJSON(os.Stdout, reports); err != nil {
+			return Result{}, err
+		}
+	}
 
 	return Result{Total: len(snap.TCPConns), Killed: killed, Failed: failed}, nil
 }
 
-func logf(format string, args ...any) {
-	ts := time.Now().Format("15:04:05")
-	fmt.Printf("["+ts+"] "+format+"\n", args...)
+func applyFilters(snap Snapshot, cfg Config) []connInfo {
+	conns := snap.TCPConns
+	if len(cfg.Ports) > 0 {
+		conns = FilterByPorts(conns, cfg.Ports)
+	}
+	snap.TCPConns = conns
+	if len(cfg.RoutingKeys) > 0 {
+		conns = FilterByRoutingKeys(conns, cfg.RoutingKeys)
+		snap.TCPConns = conns
+	}
+	if len(cfg.States) > 0 {
+		conns = FilterByStates(snap, cfg.States)
+	}
+	return conns
 }
 
-func fmtSeconds(s *int) string {
-	if s == nil {
-		return "never"
+func filterEmptyMessage(cfg Config) string {
+	var parts []string
+	if len(cfg.Ports) > 0 {
+		parts = append(parts, "port "+FormatPorts(cfg.Ports))
 	}
-	return fmtDuration(time.Duration(*s) * time.Second)
+	if len(cfg.States) > 0 {
+		parts = append(parts, "state "+joinQuoted(cfg.States))
+	}
+	if len(cfg.RoutingKeys) > 0 {
+		parts = append(parts, "routing-key "+joinQuoted(cfg.RoutingKeys))
+	}
+	if len(parts) == 0 {
+		return "No connections found."
+	}
+	msg := "No connections found matching"
+	for i, p := range parts {
+		if i == 0 {
+			msg += " " + p
+		} else {
+			msg += ", " + p
+		}
+	}
+	return msg + "."
 }
 
-func fmtDuration(d time.Duration) string {
-	sec := int(d.Seconds())
-	h := sec / 3600
-	m := (sec % 3600) / 60
-	s := sec % 60
-	if h > 0 {
-		return fmt.Sprintf("%dh%02dm%02ds", h, m, s)
-	}
-	if m > 0 {
-		return fmt.Sprintf("%dm%02ds", m, s)
-	}
-	return fmt.Sprintf("%ds", s)
+func joinQuoted(vals []string) string {
+	return strings.Join(vals, ", ")
 }

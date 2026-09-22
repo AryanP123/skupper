@@ -88,6 +88,19 @@ func TestPrintPortStatsEmpty(t *testing.T) {
 	}
 }
 
+func TestPrintPortStatsIncludesCorrelationColumns(t *testing.T) {
+	var buf bytes.Buffer
+	PrintPortStats(&buf, []PortStat{
+		{Port: 8080, In: 2, Out: 2, RoutingKey: "echo:8080", Resource: "listener/frontend"},
+	}, nil)
+	out := buf.String()
+	for _, want := range []string{"ROUTING-KEY", "RESOURCE", "echo:8080", "listener/frontend"} {
+		if !bytes.Contains(buf.Bytes(), []byte(want)) {
+			t.Errorf("PrintPortStats() missing %q in:\n%s", want, out)
+		}
+	}
+}
+
 func TestFilterByPorts(t *testing.T) {
 	conns := []connInfo{
 		{Identity: "1", Dir: "in", Host: "10.0.0.9:41002", LocalSocket: "10.0.0.2:8080"},

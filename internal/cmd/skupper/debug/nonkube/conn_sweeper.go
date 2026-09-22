@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"os"
 	"os/exec"
 	"time"
 
@@ -48,9 +47,18 @@ func (cmd *CmdConnSweeper) ValidateInput(args []string) error {
 	if err := sweeper.ValidatePorts(cmd.Flags.Ports); err != nil {
 		validationErrors = append(validationErrors, err)
 	}
+	if _, err := sweeper.NormalizeStates(cmd.Flags.States); err != nil {
+		validationErrors = append(validationErrors, err)
+	}
+	if err := sweeper.ValidateOutput(cmd.Flags.Output); err != nil {
+		validationErrors = append(validationErrors, err)
+	}
 	if cmd.Flags.ListPorts {
 		if cmd.Flags.Execute {
 			validationErrors = append(validationErrors, fmt.Errorf("--execute cannot be used with --list-ports: listing ports never closes connections"))
+		}
+		if len(cmd.Flags.States) > 0 {
+			validationErrors = append(validationErrors, fmt.Errorf("--state cannot be used with --list-ports: port listing does not query kernel sockets"))
 		}
 		return errors.Join(validationErrors...)
 	}
@@ -112,13 +120,15 @@ func (cmd *CmdConnSweeper) Run() error {
 			URL:               cmd.url,
 			Skmanage:          cmd.skmanage,
 			Ports:             cmd.Flags.Ports,
+			RoutingKeys:       cmd.Flags.RoutingKeys,
+			Output:            cmd.Flags.Output,
 			Exec:              cmd.exec,
 			SkmanageExtraArgs: cmd.sslArgs,
 		})
 		if err != nil {
 			return err
 		}
-		sweeper.PrintPortStats(os.Stdout, stats, cmd.Flags.Ports)
+		sweeper.PrintPortStatsToStdout(stats, cmd.Flags.Ports, cmd.Flags.Output)
 		return nil
 	}
 
@@ -128,6 +138,9 @@ func (cmd *CmdConnSweeper) Run() error {
 		IdleThresholdSecs: cmd.Flags.IdleThreshold,
 		Execute:           cmd.Flags.Execute,
 		Ports:             cmd.Flags.Ports,
+		States:            cmd.Flags.States,
+		RoutingKeys:       cmd.Flags.RoutingKeys,
+		Output:            cmd.Flags.Output,
 		Exec:              cmd.exec,
 		SkmanageExtraArgs: cmd.sslArgs,
 	})

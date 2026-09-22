@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"os"
 	"time"
 
 	"github.com/skupperproject/skupper/internal/cmd/skupper/common"
@@ -26,7 +25,7 @@ const (
 	podExecTimeout    = 30 * time.Second
 )
 
-// CmdConnSweeper is the kubernetes entry point for `skupper debug sweep`. It
+// CmdConnSweeper is the kubernetes entry point for `skupper debug conn`. It
 // finds every ready router pod and runs the sweeper against each one, with
 // all commands exec'd inside the router container so they see the pod's own
 // network namespace (no port-forward needed).
@@ -83,9 +82,18 @@ func (cmd *CmdConnSweeper) ValidateInput(args []string) error {
 	if err := sweeper.ValidatePorts(cmd.Flags.Ports); err != nil {
 		validationErrors = append(validationErrors, err)
 	}
+	if _, err := sweeper.NormalizeStates(cmd.Flags.States); err != nil {
+		validationErrors = append(validationErrors, err)
+	}
+	if err := sweeper.ValidateOutput(cmd.Flags.Output); err != nil {
+		validationErrors = append(validationErrors, err)
+	}
 	if cmd.Flags.ListPorts {
 		if cmd.Flags.Execute {
 			validationErrors = append(validationErrors, fmt.Errorf("--execute cannot be used with --list-ports: listing ports never closes connections"))
+		}
+		if len(cmd.Flags.States) > 0 {
+			validationErrors = append(validationErrors, fmt.Errorf("--state cannot be used with --list-ports: port listing does not query kernel sockets"))
 		}
 		return errors.Join(validationErrors...)
 	}
@@ -130,10 +138,13 @@ func (cmd *CmdConnSweeper) Run() error {
 			IdleThresholdSecs: cmd.Flags.IdleThreshold,
 			Execute:           cmd.Flags.Execute,
 			Ports:             cmd.Flags.Ports,
+			States:            cmd.Flags.States,
+			RoutingKeys:       cmd.Flags.RoutingKeys,
+			Output:            cmd.Flags.Output,
 			Exec:              cmd.podExecer(podName),
 		})
 		if err != nil {
-			fmt.Printf("sweep of pod %s failed: %v\n", podName, err)
+			fmt.Printf("conn inspection of pod %s failed: %v\n", podName, err)
 			failedPods = append(failedPods, podName)
 			continue
 		}
@@ -148,7 +159,7 @@ func (cmd *CmdConnSweeper) Run() error {
 			total.Total, total.Killed, total.Skipped, total.Failed)
 	}
 	if len(failedPods) > 0 {
-		return fmt.Errorf("sweep failed on %d of %d router pod(s): %v", len(failedPods), len(podNames), failedPods)
+		return fmt.Errorf("conn inspection failed on %d of %d router pod(s): %v", len(failedPods), len(podNames), failedPods)
 	}
 	if total.Failed > 0 {
 		return fmt.Errorf("%d idle connection(s) failed to close (%d closed)", total.Failed, total.Killed)
@@ -166,24 +177,26 @@ func (cmd *CmdConnSweeper) listPorts(podNames []string) error {
 	for _, podName := range podNames {
 		fmt.Printf("=== router pod %s (namespace %s) ===\n", podName, cmd.Namespace)
 		stats, err := sweeper.ListPorts(sweeper.Config{
-			URL:      sweeper.DefaultURL,
-			Skmanage: sweeper.DefaultSkmanage,
-			Ports:    cmd.Flags.Ports,
-			Exec:     cmd.podExecer(podName),
+			URL:         sweeper.DefaultURL,
+			Skmanage:    sweeper.DefaultSkmanage,
+			Ports:       cmd.Flags.Ports,
+			RoutingKeys: cmd.Flags.RoutingKeys,
+			Output:      cmd.Flags.Output,
+			Exec:        cmd.podExecer(podName),
 		})
 		if err != nil {
 			fmt.Printf("could not list ports for pod %s: %v\n\n", podName, err)
 			failedPods = append(failedPods, podName)
 			continue
 		}
-		sweeper.PrintPortStats(os.Stdout, stats, cmd.Flags.Ports)
+		sweeper.PrintPortStatsToStdout(stats, cmd.Flags.Ports, cmd.Flags.Output)
 		fmt.Println()
 		perPod = append(perPod, stats)
 	}
 
 	if len(perPod) > 1 {
 		fmt.Println("=== all pods ===")
-		sweeper.PrintPortStats(os.Stdout, sweeper.MergePortStats(perPod...), cmd.Flags.Ports)
+		sweeper.PrintPortStatsToStdout(sweeper.MergePortStats(perPod...), cmd.Flags.Ports, cmd.Flags.Output)
 	}
 	if len(failedPods) > 0 {
 		return fmt.Errorf("could not list ports on %d of %d router pod(s): %v", len(failedPods), len(podNames), failedPods)
