@@ -44,11 +44,16 @@ type Result struct {
 	Killed  int
 	Skipped int
 	Failed  int
+	// Reports holds idle-list or kill-result rows. In JSON mode Run fills this
+	// and does not write to stdout, so callers (especially multi-pod kube) can
+	// emit a single JSON document.
+	Reports []ConnReport
 }
 
 // Run ties the stages together: Gather (gather.go) collects
 // raw router + kernel state, filters apply, Evaluate (criteria.go) applies the
 // idle-time criteria, and killAll (kill.go) carries out whatever Evaluate decided.
+// Text mode prints progress and rows to stdout; JSON mode only returns Reports.
 func Run(cfg Config) (Result, error) {
 	if cfg.IdleThresholdSecs < 0 || int64(cfg.IdleThresholdSecs) > MaxIdleThreshold {
 		return Result{}, fmt.Errorf("idle threshold must be between 0 and %d seconds", MaxIdleThreshold)
@@ -68,8 +73,9 @@ func Run(cfg Config) (Result, error) {
 	}
 	cfg.Output = NormalizeOutput(cfg.Output)
 	cfg.States = states
+	jsonMode := cfg.Output == OutputJSON
 
-	snap, err := Gather(cfg.Exec, cfg.Skmanage, cfg.URL, cfg.SkmanageExtraArgs...)
+	snap, err := Gather(cfg.Exec, cfg.Skmanage, cfg.URL, len(cfg.RoutingKeys) > 0, cfg.SkmanageExtraArgs...)
 	if err != nil {
 		return Result{}, err
 	}
@@ -77,51 +83,52 @@ func Run(cfg Config) (Result, error) {
 	snap.TCPConns = applyFilters(snap, cfg)
 	if len(cfg.Ports) > 0 || len(cfg.States) > 0 || len(cfg.RoutingKeys) > 0 {
 		if len(snap.TCPConns) == 0 {
-			msg := filterEmptyMessage(cfg)
-			if cfg.Output == OutputJSON {
-				_ = writeJSON(os.Stdout, []ConnReport{})
-			} else {
-				logf("%s", msg)
+			if jsonMode {
+				return Result{Reports: []ConnReport{}}, nil
 			}
+			logf("%s", filterEmptyMessage(cfg))
 			return Result{}, nil
 		}
 	}
 
 	toKill := Evaluate(snap, time.Duration(cfg.IdleThresholdSecs)*time.Second)
-	if cfg.Output != OutputJSON {
+	if !jsonMode {
 		logf("total:%d  idle-orphan:%d", len(snap.TCPConns), len(toKill))
 	}
 
 	if len(toKill) == 0 {
-		if cfg.Output == OutputJSON {
-			_ = writeJSON(os.Stdout, []ConnReport{})
-		} else {
-			logf("No idle/orphaned connections found.")
+		if jsonMode {
+			return Result{Total: len(snap.TCPConns), Reports: []ConnReport{}}, nil
 		}
+		logf("No idle/orphaned connections found.")
 		return Result{Total: len(snap.TCPConns)}, nil
 	}
 
 	if !cfg.Execute {
-		if cfg.Output != OutputJSON {
-			logf("Found %d idle connection(s) — re-run with --execute to close them:", len(toKill))
+		if jsonMode {
+			return Result{
+				Total:   len(snap.TCPConns),
+				Skipped: len(toKill),
+				Reports: decisionsToReports(toKill),
+			}, nil
 		}
+		logf("Found %d idle connection(s) — re-run with --execute to close them:", len(toKill))
 		if err := printDecisions(os.Stdout, toKill, cfg.Output); err != nil {
 			return Result{}, err
 		}
 		return Result{Total: len(snap.TCPConns), Skipped: len(toKill)}, nil
 	}
 
-	if cfg.Output != OutputJSON {
+	if !jsonMode {
 		logf("--- KILLING %d connection(s) ---", len(toKill))
 	}
 	killed, failed, reports := killAll(cfg.Exec, cfg.Skmanage, cfg.URL, cfg.SkmanageExtraArgs, toKill, cfg.Output)
-	if cfg.Output == OutputJSON {
-		if err := writeJSON(os.Stdout, reports); err != nil {
-			return Result{}, err
-		}
-	}
-
-	return Result{Total: len(snap.TCPConns), Killed: killed, Failed: failed}, nil
+	return Result{
+		Total:   len(snap.TCPConns),
+		Killed:  killed,
+		Failed:  failed,
+		Reports: reports,
+	}, nil
 }
 
 func applyFilters(snap Snapshot, cfg Config) []connInfo {

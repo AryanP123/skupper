@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"time"
 
 	"github.com/skupperproject/skupper/internal/cmd/skupper/common"
@@ -127,11 +128,12 @@ func (cmd *CmdConnSweeper) Run() error {
 		return cmd.listPorts(podNames)
 	}
 
-	// Each ready replica has its own connections, so sweep every pod.
+	jsonMode := sweeper.NormalizeOutput(cmd.Flags.Output) == sweeper.OutputJSON
 	var total sweeper.Result
+	var allReports []sweeper.ConnReport
 	var failedPods []string
 	for _, podName := range podNames {
-		fmt.Printf("=== router pod %s (namespace %s) ===\n", podName, cmd.Namespace)
+		cmd.diagPodHeader(podName, jsonMode)
 		res, err := sweeper.Run(sweeper.Config{
 			URL:               sweeper.DefaultURL,
 			Skmanage:          sweeper.DefaultSkmanage,
@@ -144,7 +146,7 @@ func (cmd *CmdConnSweeper) Run() error {
 			Exec:              cmd.podExecer(podName),
 		})
 		if err != nil {
-			fmt.Printf("conn inspection of pod %s failed: %v\n", podName, err)
+			cmd.diagf(jsonMode, "conn inspection of pod %s failed: %v\n", podName, err)
 			failedPods = append(failedPods, podName)
 			continue
 		}
@@ -152,9 +154,17 @@ func (cmd *CmdConnSweeper) Run() error {
 		total.Killed += res.Killed
 		total.Skipped += res.Skipped
 		total.Failed += res.Failed
+		allReports = append(allReports, res.Reports...)
 	}
 
-	if len(podNames) > 1 {
+	if jsonMode {
+		if allReports == nil {
+			allReports = []sweeper.ConnReport{}
+		}
+		if err := sweeper.WriteJSON(os.Stdout, allReports); err != nil {
+			return err
+		}
+	} else if len(podNames) > 1 {
 		fmt.Printf("=== all pods: total:%d killed:%d skipped:%d failed:%d ===\n",
 			total.Total, total.Killed, total.Skipped, total.Failed)
 	}
@@ -169,13 +179,14 @@ func (cmd *CmdConnSweeper) Run() error {
 
 func (cmd *CmdConnSweeper) WaitUntil() error { return nil }
 
-// listPorts prints a port table per router pod, then a merged table once more
-// than one pod reported.
+// listPorts prints a port table per router pod (text), or one merged JSON
+// document for all pods.
 func (cmd *CmdConnSweeper) listPorts(podNames []string) error {
+	jsonMode := sweeper.NormalizeOutput(cmd.Flags.Output) == sweeper.OutputJSON
 	var perPod [][]sweeper.PortStat
 	var failedPods []string
 	for _, podName := range podNames {
-		fmt.Printf("=== router pod %s (namespace %s) ===\n", podName, cmd.Namespace)
+		cmd.diagPodHeader(podName, jsonMode)
 		stats, err := sweeper.ListPorts(sweeper.Config{
 			URL:         sweeper.DefaultURL,
 			Skmanage:    sweeper.DefaultSkmanage,
@@ -185,23 +196,49 @@ func (cmd *CmdConnSweeper) listPorts(podNames []string) error {
 			Exec:        cmd.podExecer(podName),
 		})
 		if err != nil {
-			fmt.Printf("could not list ports for pod %s: %v\n\n", podName, err)
+			cmd.diagf(jsonMode, "could not list ports for pod %s: %v\n", podName, err)
+			if !jsonMode {
+				fmt.Println()
+			}
 			failedPods = append(failedPods, podName)
 			continue
 		}
-		sweeper.PrintPortStatsToStdout(stats, cmd.Flags.Ports, cmd.Flags.Output)
-		fmt.Println()
 		perPod = append(perPod, stats)
+		if !jsonMode {
+			if err := sweeper.PrintPortStatsToStdout(stats, cmd.Flags.Ports, cmd.Flags.Output); err != nil {
+				return err
+			}
+			fmt.Println()
+		}
 	}
 
-	if len(perPod) > 1 {
+	if jsonMode {
+		merged := sweeper.MergePortStats(perPod...)
+		if err := sweeper.PrintPortStatsToStdout(merged, cmd.Flags.Ports, cmd.Flags.Output); err != nil {
+			return err
+		}
+	} else if len(perPod) > 1 {
 		fmt.Println("=== all pods ===")
-		sweeper.PrintPortStatsToStdout(sweeper.MergePortStats(perPod...), cmd.Flags.Ports, cmd.Flags.Output)
+		if err := sweeper.PrintPortStatsToStdout(sweeper.MergePortStats(perPod...), cmd.Flags.Ports, cmd.Flags.Output); err != nil {
+			return err
+		}
 	}
 	if len(failedPods) > 0 {
 		return fmt.Errorf("could not list ports on %d of %d router pod(s): %v", len(failedPods), len(podNames), failedPods)
 	}
 	return nil
+}
+
+func (cmd *CmdConnSweeper) diagPodHeader(podName string, jsonMode bool) {
+	cmd.diagf(jsonMode, "=== router pod %s (namespace %s) ===\n", podName, cmd.Namespace)
+}
+
+func (cmd *CmdConnSweeper) diagf(jsonMode bool, format string, args ...any) {
+	if jsonMode {
+		fmt.Fprintf(os.Stderr, format, args...)
+		return
+	}
+	fmt.Printf(format, args...)
 }
 
 func (cmd *CmdConnSweeper) findRouterPods() ([]string, error) {

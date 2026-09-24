@@ -35,7 +35,7 @@ type PortReport struct {
 }
 
 func decisionReport(d Decision) ConnReport {
-	r := ConnReport{
+	return ConnReport{
 		Identity:   d.Conn.Identity,
 		Host:       d.Conn.Host,
 		Dir:        d.Conn.Dir,
@@ -47,21 +47,26 @@ func decisionReport(d Decision) ConnReport {
 		Kind:       d.Conn.Kind,
 		Reason:     d.Reason,
 	}
-	return r
+}
+
+func decisionsToReports(decisions []Decision) []ConnReport {
+	reports := make([]ConnReport, 0, len(decisions))
+	for _, d := range decisions {
+		reports = append(reports, decisionReport(d))
+	}
+	return reports
 }
 
 func printDecisions(w io.Writer, decisions []Decision, output string) error {
 	if NormalizeOutput(output) == OutputJSON {
-		reports := make([]ConnReport, 0, len(decisions))
-		for _, d := range decisions {
-			reports = append(reports, decisionReport(d))
-		}
-		return writeJSON(w, reports)
+		return WriteJSON(w, decisionsToReports(decisions))
 	}
 	for _, d := range decisions {
-		fmt.Fprintf(w, "  id=%-6s  host=%-25s  dir=%s  port=%-5d  state=%-10s  uptime=%-10s  routing-key=%-16s  resource=%-24s  reason=%s\n",
+		if _, err := fmt.Fprintf(w, "  id=%-6s  host=%-25s  dir=%s  port=%-5d  state=%-10s  uptime=%-10s  routing-key=%-16s  resource=%-24s  reason=%s\n",
 			d.Conn.Identity, d.Conn.Host, d.Conn.Dir, d.Conn.Port, emptyDash(d.Conn.State),
-			fmtSeconds(d.Conn.UptimeSeconds), emptyDash(d.Conn.RoutingKey), emptyDash(d.Conn.Resource), d.Reason)
+			fmtSeconds(d.Conn.UptimeSeconds), emptyDash(d.Conn.RoutingKey), emptyDash(d.Conn.Resource), d.Reason); err != nil {
+			return err
+		}
 	}
 	return nil
 }
@@ -91,11 +96,15 @@ func printKillResult(w io.Writer, d Decision, action, errMsg string, output stri
 	_ = w
 }
 
-func writeJSON(w io.Writer, v any) error {
+// WriteJSON encodes v as indented JSON to w. Used by platform adapters so
+// multi-pod runs can emit a single document on stdout.
+func WriteJSON(w io.Writer, v any) error {
 	enc := json.NewEncoder(w)
 	enc.SetIndent("", "  ")
 	return enc.Encode(v)
 }
+
+func writeJSON(w io.Writer, v any) error { return WriteJSON(w, v) }
 
 func logf(format string, args ...any) {
 	ts := time.Now().Format("15:04:05")

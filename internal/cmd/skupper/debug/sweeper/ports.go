@@ -43,8 +43,20 @@ func ListPorts(cfg Config) ([]PortStat, error) {
 	if err != nil {
 		return nil, err
 	}
-	listeners, _ := gatherTcpEndpoints(cfg.Exec, cfg.Skmanage, cfg.URL, TcpListenerType, cfg.SkmanageExtraArgs...)
-	connectors, _ := gatherTcpEndpoints(cfg.Exec, cfg.Skmanage, cfg.URL, TcpConnectorType, cfg.SkmanageExtraArgs...)
+	listeners, err := gatherTcpEndpoints(cfg.Exec, cfg.Skmanage, cfg.URL, TcpListenerType, cfg.SkmanageExtraArgs...)
+	if err != nil {
+		if len(cfg.RoutingKeys) > 0 {
+			return nil, err
+		}
+		listeners = nil
+	}
+	connectors, err := gatherTcpEndpoints(cfg.Exec, cfg.Skmanage, cfg.URL, TcpConnectorType, cfg.SkmanageExtraArgs...)
+	if err != nil {
+		if len(cfg.RoutingKeys) > 0 {
+			return nil, err
+		}
+		connectors = nil
+	}
 
 	for i := range conns {
 		if port, ok := portOf(conns[i]); ok {
@@ -156,14 +168,13 @@ func mergeResourceField(a, b string) string {
 }
 
 // PrintPortStats renders the port table. filter is the --port selection, used
-// only to say which ports came up empty. When output is json, writes a JSON
-// array instead.
-func PrintPortStats(w io.Writer, stats []PortStat, filter []int) {
-	PrintPortStatsOutput(w, stats, filter, OutputText)
+// only to say which ports came up empty.
+func PrintPortStats(w io.Writer, stats []PortStat, filter []int) error {
+	return PrintPortStatsOutput(w, stats, filter, OutputText)
 }
 
 // PrintPortStatsOutput is PrintPortStats with an explicit output format.
-func PrintPortStatsOutput(w io.Writer, stats []PortStat, filter []int, output string) {
+func PrintPortStatsOutput(w io.Writer, stats []PortStat, filter []int, output string) error {
 	if NormalizeOutput(output) == OutputJSON {
 		reports := make([]PortReport, 0, len(stats))
 		for _, p := range stats {
@@ -177,29 +188,32 @@ func PrintPortStatsOutput(w io.Writer, stats []PortStat, filter []int, output st
 				Kind:       p.Kind,
 			})
 		}
-		_ = writeJSON(w, reports)
-		return
+		return WriteJSON(w, reports)
 	}
 	if len(stats) == 0 {
 		if len(filter) > 0 {
-			fmt.Fprintf(w, "No connections found on port %s.\n", FormatPorts(filter))
-			return
+			_, err := fmt.Fprintf(w, "No connections found on port %s.\n", FormatPorts(filter))
+			return err
 		}
-		fmt.Fprintln(w, "No TCP adaptor connections found.")
-		return
+		_, err := fmt.Fprintln(w, "No TCP adaptor connections found.")
+		return err
 	}
 	tw := tabwriter.NewWriter(w, 8, 8, 1, '\t', tabwriter.TabIndent)
-	fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\n", "PORT", "IN", "OUT", "TOTAL", "ROUTING-KEY", "RESOURCE")
-	for _, p := range stats {
-		fmt.Fprintf(tw, "%d\t%d\t%d\t%d\t%s\t%s\n",
-			p.Port, p.In, p.Out, p.Total(), emptyDash(p.RoutingKey), emptyDash(p.Resource))
+	if _, err := fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\n", "PORT", "IN", "OUT", "TOTAL", "ROUTING-KEY", "RESOURCE"); err != nil {
+		return err
 	}
-	_ = tw.Flush()
+	for _, p := range stats {
+		if _, err := fmt.Fprintf(tw, "%d\t%d\t%d\t%d\t%s\t%s\n",
+			p.Port, p.In, p.Out, p.Total(), emptyDash(p.RoutingKey), emptyDash(p.Resource)); err != nil {
+			return err
+		}
+	}
+	return tw.Flush()
 }
 
 // PrintPortStatsToStdout is used by platform adapters with Config.Output.
-func PrintPortStatsToStdout(stats []PortStat, filter []int, output string) {
-	PrintPortStatsOutput(os.Stdout, stats, filter, output)
+func PrintPortStatsToStdout(stats []PortStat, filter []int, output string) error {
+	return PrintPortStatsOutput(os.Stdout, stats, filter, output)
 }
 
 func summarizePorts(conns []connInfo) []PortStat {

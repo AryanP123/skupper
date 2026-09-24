@@ -25,8 +25,9 @@ NLMSG_DONE = 3
 NLMSG_ERROR = 2
 INET_DIAG_INFO = 2
 
-# Same bitmask ss uses for -t (established + half-closed + listen variants).
-TCP_STATES = (1 << 1) | (1 << 4) | (1 << 5) | (1 << 8) | (1 << 9) | (1 << 11)
+# Every TCP state accepted by --state (ss / KnownTCPStates), not only the
+# subset ss -t dumps by default.
+TCP_STATES = (1 << 1) | (1 << 2) | (1 << 3) | (1 << 4) | (1 << 5) | (1 << 6) | (1 << 7) | (1 << 8) | (1 << 9) | (1 << 10) | (1 << 11)
 
 # Kernel TCP state -> ss -tin name (iproute2 sstate_name).
 STATE_NAMES = {

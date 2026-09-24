@@ -76,11 +76,13 @@ func LocalExec(argv []string) ([]byte, error) {
 
 // Gather queries the router for its TCP adaptor connections and cross
 // references them with kernel socket state. Discards non-TCP-adaptor connections.
-// It also queries tcpListener/tcpConnector entities for port→resource correlation;
-// failures there leave enrichment empty rather than aborting the sweep.
+// It also queries tcpListener/tcpConnector entities for port→resource correlation.
+// When requireEndpointInfo is false, endpoint query failures leave enrichment
+// empty rather than aborting. When true (e.g. --routing-key is set), those
+// failures are returned so callers do not silently filter to an empty result.
 // extraArgs are appended to the skmanage invocation (e.g. --ssl-certificate
 // options when the management endpoint is amqps).
-func Gather(execFn Execer, skmanageBin, url string, extraArgs ...string) (Snapshot, error) {
+func Gather(execFn Execer, skmanageBin, url string, requireEndpointInfo bool, extraArgs ...string) (Snapshot, error) {
 	tcpConns, err := gatherConns(execFn, skmanageBin, url, extraArgs...)
 	if err != nil {
 		return Snapshot{}, err
@@ -97,8 +99,22 @@ func Gather(execFn Execer, skmanageBin, url string, extraArgs ...string) (Snapsh
 		Sockets:        byPeer,
 		SocketsByLocal: byLocal,
 	}
-	snap.Listeners, _ = gatherTcpEndpoints(execFn, skmanageBin, url, TcpListenerType, extraArgs...)
-	snap.Connectors, _ = gatherTcpEndpoints(execFn, skmanageBin, url, TcpConnectorType, extraArgs...)
+	listeners, err := gatherTcpEndpoints(execFn, skmanageBin, url, TcpListenerType, extraArgs...)
+	if err != nil {
+		if requireEndpointInfo {
+			return Snapshot{}, err
+		}
+	} else {
+		snap.Listeners = listeners
+	}
+	connectors, err := gatherTcpEndpoints(execFn, skmanageBin, url, TcpConnectorType, extraArgs...)
+	if err != nil {
+		if requireEndpointInfo {
+			return Snapshot{}, err
+		}
+	} else {
+		snap.Connectors = connectors
+	}
 	enrichSnapshot(&snap)
 	return snap, nil
 }

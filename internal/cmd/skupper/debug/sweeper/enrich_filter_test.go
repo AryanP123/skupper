@@ -150,7 +150,9 @@ func TestPrintDecisionsJSON(t *testing.T) {
 
 func TestPrintPortStatsJSON(t *testing.T) {
 	var buf bytes.Buffer
-	PrintPortStatsOutput(&buf, []PortStat{{Port: 8080, In: 1, Out: 1, RoutingKey: "echo", Resource: "listener/x"}}, nil, OutputJSON)
+	if err := PrintPortStatsOutput(&buf, []PortStat{{Port: 8080, In: 1, Out: 1, RoutingKey: "echo", Resource: "listener/x"}}, nil, OutputJSON); err != nil {
+		t.Fatal(err)
+	}
 	var reports []PortReport
 	if err := json.Unmarshal(buf.Bytes(), &reports); err != nil {
 		t.Fatalf("invalid JSON: %v", err)

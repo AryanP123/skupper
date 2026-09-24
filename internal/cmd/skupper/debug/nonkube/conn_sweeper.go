@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"os/exec"
 	"time"
 
@@ -112,8 +113,14 @@ func (cmd *CmdConnSweeper) Run() error {
 	if cmd.url == "" || cmd.skmanage == "" {
 		return fmt.Errorf("could not determine router management address for namespace %q", cmd.namespace)
 	}
+	jsonMode := sweeper.NormalizeOutput(cmd.Flags.Output) == sweeper.OutputJSON
 	if cmd.exec != nil {
-		fmt.Printf("running against %s container %s-skupper-router\n", cmd.platform, cmd.namespace)
+		msg := fmt.Sprintf("running against %s container %s-skupper-router\n", cmd.platform, cmd.namespace)
+		if jsonMode {
+			fmt.Fprint(os.Stderr, msg)
+		} else {
+			fmt.Print(msg)
+		}
 	}
 	if cmd.Flags.ListPorts {
 		stats, err := sweeper.ListPorts(sweeper.Config{
@@ -128,8 +135,7 @@ func (cmd *CmdConnSweeper) Run() error {
 		if err != nil {
 			return err
 		}
-		sweeper.PrintPortStatsToStdout(stats, cmd.Flags.Ports, cmd.Flags.Output)
-		return nil
+		return sweeper.PrintPortStatsToStdout(stats, cmd.Flags.Ports, cmd.Flags.Output)
 	}
 
 	res, err := sweeper.Run(sweeper.Config{
@@ -146,6 +152,15 @@ func (cmd *CmdConnSweeper) Run() error {
 	})
 	if err != nil {
 		return err
+	}
+	if jsonMode {
+		reports := res.Reports
+		if reports == nil {
+			reports = []sweeper.ConnReport{}
+		}
+		if err := sweeper.WriteJSON(os.Stdout, reports); err != nil {
+			return err
+		}
 	}
 	if res.Failed > 0 {
 		return fmt.Errorf("%d idle connection(s) failed to close (%d closed)", res.Failed, res.Killed)
